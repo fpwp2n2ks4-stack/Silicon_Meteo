@@ -31,6 +31,18 @@ final class PopupView: NSView {
     private let padding: CGFloat = 14
     private let rowHeight: CGFloat = 19
     private let lineWidth: CGFloat = 150
+    /// Écart entre la fin du texte de valeur et le début de la jauge.
+    private let valueGap: CGFloat = 42
+
+    /// Largeur du panneau : marge gauche, deux colonnes, l'écart des valeurs,
+    /// puis la même marge qu'à gauche.
+    ///
+    /// La marge droite doit valoir la marge gauche. La jauge est dessinée
+    /// jusqu'à `padding + lineWidth + valueGap + lineWidth`, soit 356 pt : avec
+    /// un cadre plus étroit elle dépasse le bord et se fait rogner.
+    private var panelWidth: CGFloat {
+        padding + lineWidth * 2 + valueGap + padding
+    }
 
     init(snapshot: Snapshot, coreCount: Int) {
         self.snapshot = snapshot
@@ -38,7 +50,10 @@ final class PopupView: NSView {
         // `requiredHeight` lit `snapshot` : il faut initialiser avant `super.init`,
         // ce que Swift interdit. On passe donc par une variable locale.
         let height = Self.height(for: snapshot, padding: 14, rowHeight: 19)
-        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: height))
+        super.init(frame: NSRect(x: 0, y: 0, width: 0, height: height))
+        // `panelWidth` lit des constantes d'instance, ce que Swift interdit
+        // avant `super.init` : la largeur est donc appliquée juste après.
+        frame.size.width = panelWidth
         wantsLayer = true
     }
 
@@ -324,12 +339,12 @@ final class PopupView: NSView {
 
         let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
         let valueSize = value.size(withAttributes: [.font: valueFont])
-        draw(value, at: NSPoint(x: padding + lineWidth + 42 - valueSize.width, y: y),
+        draw(value, at: NSPoint(x: padding + lineWidth + valueGap - valueSize.width, y: y),
              font: valueFont, color: primary)
 
         // Jauge fine sous la ligne
         let barY = y + 12
-        let barRect = NSRect(x: padding + lineWidth + 42, y: barY, width: lineWidth, height: 3)
+        let barRect = NSRect(x: padding + lineWidth + valueGap, y: barY, width: lineWidth, height: 3)
         secondary.withAlphaComponent(0.2).setFill()
         NSBezierPath(roundedRect: barRect, xRadius: 1.5, yRadius: 1.5).fill()
 
@@ -350,10 +365,10 @@ final class PopupView: NSView {
 
         let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
         let valueSize = value.size(withAttributes: [.font: valueFont])
-        draw(value, at: NSPoint(x: padding + lineWidth + 42 - valueSize.width, y: y),
+        draw(value, at: NSPoint(x: padding + lineWidth + valueGap - valueSize.width, y: y),
              font: valueFont, color: secondary)
 
-        let barRect = NSRect(x: padding + lineWidth + 42, y: y + 2, width: lineWidth, height: 3)
+        let barRect = NSRect(x: padding + lineWidth + valueGap, y: y + 2, width: lineWidth, height: 3)
         secondary.withAlphaComponent(0.15).setFill()
         NSBezierPath(roundedRect: barRect, xRadius: 1.5, yRadius: 1.5).fill()
 
