@@ -100,6 +100,97 @@ Distribué sous licence [MIT](LICENSE).
 
 ---
 
+## 🇪🇸 Español
+
+### ¿Qué es?
+
+Toasty es un pequeño monitor de sistema que se instala con educación en la barra de menús de macOS. Vigila discretamente qué hace tu Mac cada 2 segundos y te lo resume sin levantar nunca la voz.
+
+Sin números saltando de un lado a otro, sin una interfaz invasiva: solo unas cuantas barras que crecen o se encogen. Un clic te revela todos los detalles.
+
+### Características
+
+- **CPU** — Carga total y una barra por núcleo, mostradas **en el orden natural del sistema** (Núcleo 1, Núcleo 2, ...). Así puedes seguir un núcleo concreto a lo largo del tiempo, sin ver cómo sus números se recolocan en cada actualización.
+- **GPU** — Utilización de la GPU integrada. Si trabaja duro, se nota.
+- **Memoria (RAM)** — Memoria activa, comprimida y *wired*. Porque a macOS le encanta comprimir todo lo que puede para ganar espacio.
+- **Red** — Caudales de descarga/subida suavizados en 6 segundos, con detección automática de la interfaz activa. Escala logarítmica (verde < ~1,48 MB/s, amarillo < ~3,88 MB/s, rojo por encima). Medimos lo que realmente circula, sin adivinar el ancho de banda del enlace (que no se puede leer de forma fiable en macOS).
+- **Temperatura** — Pico del die del SoC. En Apple Silicon, CPU y GPU comparten el mismo die: todos los sensores térmicos evolucionan a la vez. Por eso mostramos honestamente el pico del die, en lugar de inventar una separación CPU/GPU que no existe.
+- **Batería** — **Tiempo restante** mostrado directamente en la barra de menús (p. ej. `1h23`, `⚡ 27 min`). Se pone en **rojo** cuando el nivel baja del 20 %. Sencillo, legible y sin complicaciones.
+
+La cabecera del panel detallado muestra el modelo del Mac a la izquierda y el chip + número de núcleos a la derecha, en la misma línea:
+
+```
+MAC - 17.3                                   Apple M5 - 10 cœurs
+```
+
+### Requisitos
+
+- macOS 14 o posterior
+- Swift (Command Line Tools instalados)
+- **Solo Apple Silicon** (los Mac Intel no exponen `machdep.cpu.brand_string`)
+
+### Compilación y ejecución
+
+```bash
+./build.sh            # Compila build/Toasty.app (solo dentro de build/)
+open build/Toasty.app
+```
+
+Para instalarlo directamente en `/Applications`:
+
+```bash
+./build.sh --install  # Copia (nunca mueve) a /Applications
+```
+
+> Por defecto, la compilación solo escribe en `build/`, junto a las fuentes. La opción `--install` hace una **copia** en `/Applications` — nunca un movimiento. Como un elemento de inicio de sesión apunta a una ruta fija, esa copia evita que una recompilación o una limpieza rompan tu arranque automático. Un argumento desconocido se rechaza con el código de salida 2 (en vez de ignorarse en silencio), así que un `--instal` mal escrito te avisará con educación.
+
+### Uso
+
+1. Lanza `Toasty.app` (manualmente o al iniciar sesión).
+2. Aparecerá discretamente en la barra de menús (arriba a la derecha, en la zona de iconos del sistema).
+3. Haz clic en el icono para mostrar el panel detallado.
+4. Haz clic otra vez (o fuera del panel) para cerrarlo. Eso es todo.
+
+### Inicio automático
+
+**Ajustes del Sistema → General → Elementos de inicio de sesión y extensiones → +**
+
+En el selector de archivos: `⌘⇧G`, pega `/Applications` (si lo instalaste con `--install`) o `/Users/<tu-nombre>/Downloads/swift_stat/build` y selecciona `Toasty.app`. También puedes arrastrarlo directamente desde Finder a la lista.
+
+Para quitarlo: selecciónalo en la lista → `-`.
+
+**Notas honestas:**
+- **Sin reinicio automático tras un fallo.** Si la aplicación peta (muy poco probable aquí), se quedará inactiva hasta tu próximo inicio de sesión.
+- **Un elemento de inicio de sesión es una ruta, no una copia.** Si mueves o borras el `.app`, tendrás que volver a añadirlo. Por eso se recomienda la copia en `/Applications`.
+- **Opción más robusta:** un LaunchAgent (`~/Library/LaunchAgents/local.Toasty.plist`) con `KeepAlive` + `SuccessfulExit: false` reinicia automáticamente tras un fallo, todo respetando un `⌘Q` limpio.
+
+### Estructura del proyecto
+
+| Archivo | Rol |
+| --- | --- |
+| `Sensors/Sensors.swift` | Lectores de bajo nivel: CPU, RAM, red, batería, GPU, temperaturas (IOKit/Darwin). |
+| `App/StatusItemView.swift` | Dibuja las barras y el tiempo de batería en la barra de menús (`NSView.draw(_:)`). |
+| `App/PopupView.swift` | Panel detallado al hacer clic (`NSView.draw(_:)`). |
+| `App/AppDelegate.swift` | Orquestación: status item, temporizador de 2 s, suavizado de red, colores. |
+| `App/main.swift` | Punto de entrada explícito de la aplicación. |
+| `verify/` | Herramientas de renderizado fuera de pantalla para generar las capturas de referencia (claro/oscuro). |
+| `build.sh` | Script de compilación, empaquetado `.app`, strip y firma ad-hoc. |
+| `.swiftlint.yml` | Configuración de SwiftLint con justificaciones explícitas. |
+
+### Licencia
+
+Distribuido bajo la [Licencia MIT](LICENSE).
+
+### Agradecimientos y notas técnicas
+
+- **Propiedad de IOKit cuidada.** Uso sistemático de `Unmanaged<T>` donde IOKit devuelve un `+1` retain. Ni una doble liberación a la vista.
+- **Llamada directa a `host_processor_info`.** Este símbolo no está declarado en el SDK, así que se invoca vía `@_silgen_name` — un pequeño favor muy educado al linker.
+- **Temperaturas honestas.** En las versiones recientes de macOS, `IOReport` ha desaparecido del espacio de usuario. Todos los sensores del die evolucionan a la vez, así que mostramos el pico del die en vez de fabricar una separación CPU/GPU que no existe.
+- **Señal de batería fiable.** El estado de «carga limitada» (Optimización de carga, ~80 %) se detecta mediante el **bit 24** de `ChargerData.NotChargingReason` (IOKit), y no se deduce del porcentaje. Sigue la decisión real de macOS.
+- **Red en escala logarítmica.** Un pico de descarga no es un «nivel de carga» lineal. Y la velocidad negociada del enlace sencillamente no se puede leer de forma fiable en macOS.
+- **Absurdamente ligero.** Bundle de ~184 KB (176 KB el binario). `strip -x` antes de firmar ahorra 48 KB (21 %). Proyecto completo (fuentes + verificaciones): 328 KB. Ligero como un duende bien criado.
+
+---
 ## 🇬🇧 English
 
 ### What is it?
@@ -192,92 +283,4 @@ Released under the [MIT License](LICENSE).
 
 ---
 
-## 🇪🇸 Español
 
-### ¿Qué es?
-
-Toasty es un pequeño monitor de sistema que se instala con educación en la barra de menús de macOS. Vigila discretamente qué hace tu Mac cada 2 segundos y te lo resume sin levantar nunca la voz.
-
-Sin números saltando de un lado a otro, sin una interfaz invasiva: solo unas cuantas barras que crecen o se encogen. Un clic te revela todos los detalles.
-
-### Características
-
-- **CPU** — Carga total y una barra por núcleo, mostradas **en el orden natural del sistema** (Núcleo 1, Núcleo 2, ...). Así puedes seguir un núcleo concreto a lo largo del tiempo, sin ver cómo sus números se recolocan en cada actualización.
-- **GPU** — Utilización de la GPU integrada. Si trabaja duro, se nota.
-- **Memoria (RAM)** — Memoria activa, comprimida y *wired*. Porque a macOS le encanta comprimir todo lo que puede para ganar espacio.
-- **Red** — Caudales de descarga/subida suavizados en 6 segundos, con detección automática de la interfaz activa. Escala logarítmica (verde < ~1,48 MB/s, amarillo < ~3,88 MB/s, rojo por encima). Medimos lo que realmente circula, sin adivinar el ancho de banda del enlace (que no se puede leer de forma fiable en macOS).
-- **Temperatura** — Pico del die del SoC. En Apple Silicon, CPU y GPU comparten el mismo die: todos los sensores térmicos evolucionan a la vez. Por eso mostramos honestamente el pico del die, en lugar de inventar una separación CPU/GPU que no existe.
-- **Batería** — **Tiempo restante** mostrado directamente en la barra de menús (p. ej. `1h23`, `⚡ 27 min`). Se pone en **rojo** cuando el nivel baja del 20 %. Sencillo, legible y sin complicaciones.
-
-La cabecera del panel detallado muestra el modelo del Mac a la izquierda y el chip + número de núcleos a la derecha, en la misma línea:
-
-```
-MAC - 17.3                                   Apple M5 - 10 cœurs
-```
-
-### Requisitos
-
-- macOS 14 o posterior
-- Swift (Command Line Tools instalados)
-- **Solo Apple Silicon** (los Mac Intel no exponen `machdep.cpu.brand_string`)
-
-### Compilación y ejecución
-
-```bash
-./build.sh            # Compila build/Toasty.app (solo dentro de build/)
-open build/Toasty.app
-```
-
-Para instalarlo directamente en `/Applications`:
-
-```bash
-./build.sh --install  # Copia (nunca mueve) a /Applications
-```
-
-> Por defecto, la compilación solo escribe en `build/`, junto a las fuentes. La opción `--install` hace una **copia** en `/Applications` — nunca un movimiento. Como un elemento de inicio de sesión apunta a una ruta fija, esa copia evita que una recompilación o una limpieza rompan tu arranque automático. Un argumento desconocido se rechaza con el código de salida 2 (en vez de ignorarse en silencio), así que un `--instal` mal escrito te avisará con educación.
-
-### Uso
-
-1. Lanza `Toasty.app` (manualmente o al iniciar sesión).
-2. Aparecerá discretamente en la barra de menús (arriba a la derecha, en la zona de iconos del sistema).
-3. Haz clic en el icono para mostrar el panel detallado.
-4. Haz clic otra vez (o fuera del panel) para cerrarlo. Eso es todo.
-
-### Inicio automático
-
-**Ajustes del Sistema → General → Elementos de inicio de sesión y extensiones → +**
-
-En el selector de archivos: `⌘⇧G`, pega `/Applications` (si lo instalaste con `--install`) o `/Users/<tu-nombre>/Downloads/swift_stat/build` y selecciona `Toasty.app`. También puedes arrastrarlo directamente desde Finder a la lista.
-
-Para quitarlo: selecciónalo en la lista → `-`.
-
-**Notas honestas:**
-- **Sin reinicio automático tras un fallo.** Si la aplicación peta (muy poco probable aquí), se quedará inactiva hasta tu próximo inicio de sesión.
-- **Un elemento de inicio de sesión es una ruta, no una copia.** Si mueves o borras el `.app`, tendrás que volver a añadirlo. Por eso se recomienda la copia en `/Applications`.
-- **Opción más robusta:** un LaunchAgent (`~/Library/LaunchAgents/local.Toasty.plist`) con `KeepAlive` + `SuccessfulExit: false` reinicia automáticamente tras un fallo, todo respetando un `⌘Q` limpio.
-
-### Estructura del proyecto
-
-| Archivo | Rol |
-| --- | --- |
-| `Sensors/Sensors.swift` | Lectores de bajo nivel: CPU, RAM, red, batería, GPU, temperaturas (IOKit/Darwin). |
-| `App/StatusItemView.swift` | Dibuja las barras y el tiempo de batería en la barra de menús (`NSView.draw(_:)`). |
-| `App/PopupView.swift` | Panel detallado al hacer clic (`NSView.draw(_:)`). |
-| `App/AppDelegate.swift` | Orquestación: status item, temporizador de 2 s, suavizado de red, colores. |
-| `App/main.swift` | Punto de entrada explícito de la aplicación. |
-| `verify/` | Herramientas de renderizado fuera de pantalla para generar las capturas de referencia (claro/oscuro). |
-| `build.sh` | Script de compilación, empaquetado `.app`, strip y firma ad-hoc. |
-| `.swiftlint.yml` | Configuración de SwiftLint con justificaciones explícitas. |
-
-### Licencia
-
-Distribuido bajo la [Licencia MIT](LICENSE).
-
-### Agradecimientos y notas técnicas
-
-- **Propiedad de IOKit cuidada.** Uso sistemático de `Unmanaged<T>` donde IOKit devuelve un `+1` retain. Ni una doble liberación a la vista.
-- **Llamada directa a `host_processor_info`.** Este símbolo no está declarado en el SDK, así que se invoca vía `@_silgen_name` — un pequeño favor muy educado al linker.
-- **Temperaturas honestas.** En las versiones recientes de macOS, `IOReport` ha desaparecido del espacio de usuario. Todos los sensores del die evolucionan a la vez, así que mostramos el pico del die en vez de fabricar una separación CPU/GPU que no existe.
-- **Señal de batería fiable.** El estado de «carga limitada» (Optimización de carga, ~80 %) se detecta mediante el **bit 24** de `ChargerData.NotChargingReason` (IOKit), y no se deduce del porcentaje. Sigue la decisión real de macOS.
-- **Red en escala logarítmica.** Un pico de descarga no es un «nivel de carga» lineal. Y la velocidad negociada del enlace sencillamente no se puede leer de forma fiable en macOS.
-- **Absurdamente ligero.** Bundle de ~184 KB (176 KB el binario). `strip -x` antes de firmar ahorra 48 KB (21 %). Proyecto completo (fuentes + verificaciones): 328 KB. Ligero como un duende bien criado.
