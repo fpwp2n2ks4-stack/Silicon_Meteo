@@ -23,6 +23,7 @@ INSTALL_DIR="/Applications"
 INSTALL=0
 SOURCES=(
     Sensors/Sensors.swift
+    Resources/Localization.swift
     App/StatusItemView.swift
     App/PopupView.swift
     App/AppDelegate.swift
@@ -46,6 +47,14 @@ rm -rf "$APP_BUNDLE"
 echo "▸ Création du bundle"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
+
+# Ressources de langue : chaque `.lproj` est copié tel quel dans Resources/.
+# C'est ce que lit `Localization.bundle` pour choisir la langue active.
+echo "▸ Ressources de langue"
+for lproj in Resources/*.lproj; do
+    [ -d "$lproj" ] || continue
+    cp -R "$lproj" "$APP_BUNDLE/Contents/Resources/"
+done
 
 echo "▸ Compilation (arm64 natif)"
 swiftc \
@@ -75,6 +84,14 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
     <string>$APP_NAME</string>
     <key>CFBundleIdentifier</key>
     <string>local.$APP_NAME</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>fr</string>
+        <string>es</string>
+    </array>
     <key>CFBundleExecutable</key>
     <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>

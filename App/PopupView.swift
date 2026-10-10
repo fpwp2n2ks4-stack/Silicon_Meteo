@@ -155,7 +155,7 @@ final class PopupView: NSView {
         // point de `draw` est le bas du cadre du texte, pas la ligne de base.
         // Sans cette correction, la puce flotterait ~0,4 pt trop haut.
         let chipFont = NSFont.systemFont(ofSize: 10)
-        drawRight("\(HostInfo.chipString) - \(coreCount) cœurs",
+        drawRight(L("%1$@ - %2$d cores", HostInfo.chipString, coreCount),
                   at: NSPoint(x: padding, y: y + modelFont.descender - chipFont.descender),
                   rightEdge: bounds.width - padding,
                   font: chipFont, color: secondary)
@@ -172,7 +172,7 @@ final class PopupView: NSView {
 
         // ---- CPU ----
         let cpuText = String(format: "%.0f %%", snapshot.cpu.total)
-        drawRow(label: "CPU", value: cpuText, at: y, primary: primary, secondary: secondary,
+        drawRow(label: L("CPU"), value: cpuText, at: y, primary: primary, secondary: secondary,
                 fraction: snapshot.cpu.total / 100, appearance: appearance)
         y += rowHeight
 
@@ -187,7 +187,7 @@ final class PopupView: NSView {
         // barre de progression, couleur par seuil de charge (gérée par drawCoreBar).
         if !snapshot.cpu.perCore.isEmpty {
             for (index, value) in snapshot.cpu.perCore.enumerated() {
-                let label = "Cœur \(index + 1)"
+                let label = L("Core %d", index + 1)
                 let text = String(format: "%3.0f %%", value)
                 drawCoreBar(label: label, value: text, fraction: value / 100, at: y,
                             primary: primary, secondary: secondary)
@@ -200,14 +200,14 @@ final class PopupView: NSView {
         y += 8
 
         // ---- GPU ----
-        drawRow(label: "GPU",
+        drawRow(label: L("GPU"),
                 value: "\(snapshot.gpu.deviceUtilization) %",
                 at: y, primary: primary, secondary: secondary,
                 fraction: Double(snapshot.gpu.deviceUtilization) / 100, appearance: appearance)
         y += rowHeight
 
         if snapshot.gpu.inUseMemory > 0 {
-            draw("Mémoire vidéo \(Formatters.bytes(snapshot.gpu.inUseMemory))",
+            draw(L("Video memory %@", Formatters.bytes(snapshot.gpu.inUseMemory)),
                  at: NSPoint(x: padding + 92, y: y),
                  font: .systemFont(ofSize: 10), color: secondary)
             y += rowHeight - 4
@@ -217,7 +217,7 @@ final class PopupView: NSView {
         y += 8
 
         // ---- Mémoire ----
-        drawRow(label: "Mémoire",
+        drawRow(label: L("Memory"),
                 value: "\(Int(snapshot.memory.fraction * 100)) %",
                 at: y, primary: primary, secondary: secondary,
                 fraction: snapshot.memory.fraction, appearance: appearance)
@@ -225,8 +225,9 @@ final class PopupView: NSView {
         draw("\(Formatters.bytes(snapshot.memory.used)) / \(Formatters.bytes(snapshot.memory.total))",
              at: NSPoint(x: padding + 92, y: y), font: .systemFont(ofSize: 10), color: secondary)
         y += rowHeight - 4
-        draw("compressé \(Formatters.bytes(snapshot.memory.compressed))"
-             + " · linked \(Formatters.bytes(snapshot.memory.wired))",
+        draw(L("compressed %1$@ · wired %2$@",
+               Formatters.bytes(snapshot.memory.compressed),
+               Formatters.bytes(snapshot.memory.wired)),
              at: NSPoint(x: padding + 92, y: y), font: .systemFont(ofSize: 10), color: secondary)
         y += rowHeight
 
@@ -234,18 +235,18 @@ final class PopupView: NSView {
         y += 8
 
         // ---- Réseau ----
-        drawRow(label: "Réseau ↓",
+        drawRow(label: L("Network ↓"),
                 value: Formatters.rate(snapshot.network.downloadPerSecond),
                 at: y, primary: primary, secondary: secondary,
                 fraction: networkFraction, appearance: appearance)
         y += rowHeight
-        drawRow(label: "Réseau ↑",
+        drawRow(label: L("Network ↑"),
                 value: Formatters.rate(snapshot.network.uploadPerSecond),
                 at: y, primary: primary, secondary: secondary,
                 fraction: networkFraction, appearance: appearance)
         y += rowHeight
         if let interface = snapshot.network.activeInterface {
-            draw("interface \(interface)", at: NSPoint(x: padding + 92, y: y),
+            draw(L("interface %@", interface), at: NSPoint(x: padding + 92, y: y),
                  font: .systemFont(ofSize: 10), color: secondary)
             y += rowHeight - 4
         }
@@ -255,15 +256,14 @@ final class PopupView: NSView {
 
         // ---- Température ----
         if snapshot.temperature.dieCount > 0 {
-            drawRow(label: "Température SoC",
+            drawRow(label: L("SoC temperature"),
                     value: snapshot.temperature.socPeak.map { String(format: "%.1f °C", $0) } ?? "—",
                     at: y, primary: primary, secondary: secondary,
                     fraction: temperatureFraction, appearance: appearance)
             y += rowHeight
-            let detail = [
-                "moyenne \(String(format: "%.1f", snapshot.temperature.socAverage ?? 0)) °C",
-                "\(snapshot.temperature.dieCount) points de mesure"
-            ].joined(separator: " · ")
+            let average = String(format: "%.1f", snapshot.temperature.socAverage ?? 0)
+            let detail = L("avg %1$@ °C · %2$d measurement points",
+                           average, snapshot.temperature.dieCount)
             draw(detail, at: NSPoint(x: padding + 92, y: y),
                  font: .systemFont(ofSize: 10), color: secondary)
             y += rowHeight - 3
@@ -274,9 +274,10 @@ final class PopupView: NSView {
             drawSeparator(y: y, appearance: appearance)
             y += 8
             let symbol = snapshot.battery.isCharging ? "⚡︎ " : ""
-            var text = "\(symbol)\(snapshot.battery.level) %"
+            var text = "\(symbol)\(L("%d %%", snapshot.battery.level))"
             if let minutes = snapshot.battery.timeRemainingMinutes, minutes > 0 {
-                text += snapshot.battery.isCharging ? " — \(Formatters.duration(minutes))" : " — \(Formatters.duration(minutes)) restantes"
+                let duration = Formatters.duration(minutes)
+                text += snapshot.battery.isCharging ? " — \(duration)" : L(" — %@ remaining", duration)
             }
             // Marqueur textuel, comme le ⚡︎ de la charge : l'état doit se
             // lire sans la couleur. Le jaune de la jauge encode le mode
@@ -284,8 +285,8 @@ final class PopupView: NSView {
             // couleurs système, et le rouge vire au jaune. Un mot reste
             // fiable. Il est affiché même sous 20 %, où le rouge prend la
             // priorité : le mode est réel dans les deux cas.
-            if snapshot.battery.isLowPowerMode { text += " · éco" }
-            drawRow(label: "Batterie", value: text, at: y, primary: primary, secondary: secondary,
+            if snapshot.battery.isLowPowerMode { text += L(" · low power") }
+            drawRow(label: L("Battery"), value: text, at: y, primary: primary, secondary: secondary,
                     fraction: Double(snapshot.battery.level) / 100, appearance: appearance,
                     tint: GaugeColor.battery(level: snapshot.battery.level,
                                              isPlugged: snapshot.battery.isPlugged,
@@ -298,7 +299,7 @@ final class PopupView: NSView {
         // ---- Pied de page ----
         drawSeparator(y: y, appearance: appearance)
         y += 8
-        let footer = "Rafraîchissement \(Formatters.interval(Interval.current))  ·  clic pour fermer"
+        let footer = L("Refresh %1$@  ·  click to close", Formatters.interval(Interval.current))
         draw(footer, at: NSPoint(x: padding, y: y), font: .systemFont(ofSize: 9), color: secondary)
     }
 
@@ -522,7 +523,7 @@ enum HostInfo {
 enum Formatters {
     /// Octets en unités lisibles, base 1024.
     static func bytes(_ value: Double) -> String {
-        let units = ["o", "Ko", "Mo", "Go", "To"]
+        let units = [L("B"), L("KB"), L("MB"), L("GB"), L("TB")]
         var amount = value
         var unit = 0
         while amount >= 1024, unit < units.count - 1 {
@@ -535,16 +536,15 @@ enum Formatters {
     }
 
     static func rate(_ bytesPerSecond: Double) -> String {
-        guard bytesPerSecond > 0 else { return "0 o/s" }
         return bytes(bytesPerSecond) + "/s"
     }
 
     /// Durée en minutes : autonomie restante, temps de charge.
     static func duration(_ minutes: Int) -> String {
-        if minutes < 60 { return "\(minutes) min" }
+        if minutes < 60 { return L("%d min", minutes) }
         let hours = minutes / 60
         let rest = minutes % 60
-        return rest == 0 ? "\(hours) h" : "\(hours) h \(rest)"
+        return rest == 0 ? L("%d h", hours) : L("%1$d h %2$d", hours, rest)
     }
 
     /// Intervalle en **secondes**, pour le pied de panneau.
@@ -553,7 +553,7 @@ enum Formatters {
     /// Passer des secondes à ce dernier affichait « 2 min » pour une
     /// cadence de 2 s.
     static func interval(_ seconds: Double) -> String {
-        if seconds < 60 { return String(format: "%.0f s", seconds) }
+        if seconds < 60 { return L("%.0f s", seconds) }
         return duration(Int((seconds / 60).rounded()))
     }
 }

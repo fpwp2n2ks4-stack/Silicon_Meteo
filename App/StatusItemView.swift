@@ -67,7 +67,7 @@ final class StatusItemView: NSView {
         if let minutes = b.timeRemainingMinutes, minutes > 0 {
             return b.isCharging ? "⚡ \(Formatters.duration(minutes))" : Formatters.duration(minutes)
         }
-        return "\(b.level) %"
+        return L("%d %%", b.level)
     }
 
     /// Détermine la couleur du texte batterie dans la barre de menus.

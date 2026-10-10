@@ -59,6 +59,12 @@ Pour l'installer directement dans `/Applications` :
 3. Cliquez sur l'icône pour afficher le panneau détaillé.
 4. Cliquez à nouveau (ou cliquez hors du panneau) pour le fermer. C'est tout.
 
+### Langue
+
+L'interface est disponible en **français, anglais et espagnol**. Par défaut, elle suit la langue du système. Pour la changer : **clic droit** sur l'icône de la barre de menus → **Langue** → choisissez. Le choix est mémorisé et s'applique immédiatement. Le menu donne aussi accès à **Quitter**.
+
+La localisation s'appuie uniquement sur les APIs natives d'Apple (`NSLocalizedString`) : aucune dépendance externe, et les traductions font partie du projet, donc couvertes par la licence MIT.
+
 ### Démarrage automatique
 
 **Réglages Système → Général → Éléments de connexion et extensions → +**
@@ -81,6 +87,8 @@ Pour le retirer : sélectionnez-le dans la liste → `-`.
 | `App/PopupView.swift` | Panneau détaillé affiché au clic (dessin NSView). |
 | `App/AppDelegate.swift` | Orchestration : status item, timer 2s, lissage réseau, couleurs. |
 | `App/main.swift` | Point d'entrée explicite de l'application. |
+| `Resources/Localization.swift` | Gestion de la langue (suit le système, forçable via le menu) et helper `L(_:)`. |
+| `Resources/*.lproj/` | Traductions de l'interface (français, anglais, espagnol). |
 | `verify/` | Outils de rendu hors-écran pour générer les captures de référence (clair/sombre). |
 | `build.sh` | Script de build, empaquetage `.app`, strip et signature ad-hoc. |
 | `.swiftlint.yml` | Configuration SwiftLint avec justifications explicites. |
@@ -151,6 +159,12 @@ Para instalarlo directamente en `/Applications`:
 3. Haz clic en el icono para mostrar el panel detallado.
 4. Haz clic otra vez (o fuera del panel) para cerrarlo. Eso es todo.
 
+### Idioma
+
+La interfaz está disponible en **francés, inglés y español**. Por defecto sigue el idioma del sistema. Para cambiarla: **clic derecho** en el icono de la barra de menús → **Idioma** → elige. La elección se guarda y se aplica al instante. El menú también da acceso a **Salir**.
+
+La localización usa únicamente las APIs nativas de Apple (`NSLocalizedString`): sin dependencias externas, y las traducciones forman parte del proyecto, por lo que están cubiertas por la licencia MIT.
+
 ### Inicio automático
 
 **Ajustes del Sistema → General → Elementos de inicio de sesión y extensiones → +**
@@ -173,6 +187,8 @@ Para quitarlo: selecciónalo en la lista → `-`.
 | `App/PopupView.swift` | Panel detallado al hacer clic (`NSView.draw(_:)`). |
 | `App/AppDelegate.swift` | Orquestación: status item, temporizador de 2 s, suavizado de red, colores. |
 | `App/main.swift` | Punto de entrada explícito de la aplicación. |
+| `Resources/Localization.swift` | Gestión del idioma (sigue el sistema o se fuerza desde el menú) y helper `L(_:)`. |
+| `Resources/*.lproj/` | Traducciones de la interfaz (francés, inglés, español). |
 | `verify/` | Herramientas de renderizado fuera de pantalla para generar las capturas de referencia (claro/oscuro). |
 | `build.sh` | Script de compilación, empaquetado `.app`, strip y firma ad-hoc. |
 | `.swiftlint.yml` | Configuración de SwiftLint con justificaciones explícitas. |
@@ -242,6 +258,12 @@ To install cleanly into `/Applications`:
 3. Click the icon to show the detailed panel.
 4. Click again (or outside the panel) to close it. That's it.
 
+### Language
+
+The interface is available in **French, English and Spanish**. By default it follows the system language. To change it: **right-click** the menu bar icon → **Language** → pick one. The choice is remembered and applied instantly. The menu also gives access to **Quit**.
+
+Localization relies solely on Apple's native APIs (`NSLocalizedString`): no external dependencies, and the translations are part of the project, hence covered by the MIT license.
+
 ### Launch at Login
 
 **System Settings → General → Login Items & Extensions → +**
@@ -264,6 +286,8 @@ To remove: select it in the list → `-`.
 | `App/PopupView.swift` | Detailed panel on click (`NSView.draw(_:)`). |
 | `App/AppDelegate.swift` | Wiring: status item, 2s timer, network smoothing, colors. |
 | `App/main.swift` | Explicit app entry point. |
+| `Resources/Localization.swift` | Language handling (follows the system, can be forced from the menu) and `L(_:)` helper. |
+| `Resources/*.lproj/` | Interface translations (French, English, Spanish). |
 | `verify/` | Offscreen rendering tools to generate light/dark reference captures. |
 | `build.sh` | Build script, `.app` packaging, strip, ad-hoc signing. |
 | `.swiftlint.yml` | SwiftLint config with explicit justifications. |
