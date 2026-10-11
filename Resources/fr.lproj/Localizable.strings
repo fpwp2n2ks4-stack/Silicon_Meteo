@@ -1,0 +1,32 @@
+/* Interface — français. La clé est le texte anglais de référence. */
+
+"CPU" = "CPU";
+"GPU" = "GPU";
+"Core %d" = "Cœur %d";
+"Video memory %@" = "Mémoire vidéo %@";
+"Memory" = "Mémoire";
+"compressed %1$@ · wired %2$@" = "compressé %1$@ · câblée %2$@";
+"Network ↓" = "Réseau ↓";
+"Network ↑" = "Réseau ↑";
+"interface %@" = "interface %@";
+"SoC temperature" = "Température SoC";
+"avg %1$@ °C · %2$d measurement points" = "moyenne %1$@ °C · %2$d points de mesure";
+"Battery" = "Batterie";
+" — %@ remaining" = " — %@ restantes";
+" · low power" = " · éco";
+"Refresh %1$@  ·  click to close" = "Rafraîchissement %1$@  ·  clic pour fermer";
+"%1$@ - %2$d cores" = "%1$@ - %2$d cœurs";
+"Language" = "Langue";
+"Quit" = "Quitter";
+
+/* Unités et formats */
+"B" = "o";
+"KB" = "Ko";
+"MB" = "Mo";
+"GB" = "Go";
+"TB" = "To";
+"%d min" = "%d min";
+"%d h" = "%d h";
+"%1$d h %2$d" = "%1$d h %2$d";
+"%.0f s" = "%.0f s";
+"%d %%" = "%d %%";

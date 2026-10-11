@@ -61,9 +61,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusView = StatusItemView(snapshot: latest)
         statusItem.button?.addSubview(statusView)
 
-        // Le clic ouvre le panneau ; pas de menu système, le panneau suffit.
+        // Le clic gauche ouvre le panneau, le clic droit affiche le menu
+        // (langue, quitter) : le panneau suffit pour consulter, le menu est
+        // réservé aux actions.
         statusItem.button?.target = self
-        statusItem.button?.action = #selector(togglePopover)
+        statusItem.button?.action = #selector(handleClick)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
         updateStatusItemSize()
         statusView.isHidden = false
@@ -98,11 +101,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                   height: size.height)
     }
 
+    @objc private func handleClick() {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showContextMenu()
+        } else {
+            togglePopover()
+        }
+    }
+
     @objc private func togglePopover() {
         if popover.isShown {
             closePopover()
         } else {
             openPopover()
+        }
+    }
+
+    // MARK: - Menu (clic droit)
+
+    /// Menu contextuel : choix de la langue et quitter.
+    ///
+    /// Le menu est posé sur le `statusItem` le temps de l'affichage puis
+    /// retiré aussitôt : sans cela, le clic gauche ouvrirait le menu au lieu
+    /// du panneau, ce qui est le comportement par défaut d'un item de menu.
+    private func showContextMenu() {
+        let menu = NSMenu()
+
+        let languageItem = NSMenuItem(title: L("Language"), action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        for language in Localization.supported {
+            let item = NSMenuItem(title: language.name,
+                                  action: #selector(selectLanguage(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = language.code
+            item.state = language.code == Localization.current ? .on : .off
+            submenu.addItem(item)
+        }
+        languageItem.submenu = submenu
+        menu.addItem(languageItem)
+
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(title: L("Quit"), action: #selector(quit), keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    @objc private func selectLanguage(_ sender: NSMenuItem) {
+        guard let code = sender.representedObject as? String else { return }
+        Localization.set(code)
+        refreshLocalizedUI()
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    /// Réaffiche immédiatement l'interface après un changement de langue.
+    private func refreshLocalizedUI() {
+        statusView.needsDisplay = true
+        updateStatusItemSize()
+        if let view = popover.contentViewController?.view as? PopupView {
+            view.needsDisplay = true
         }
     }
 
@@ -204,6 +269,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:      step = 0
         }
         let name = battery.isCharging ? "battery.100.bolt" : "battery.\(step)"
-        return NSImage(systemSymbolName: name, accessibilityDescription: nil)
+        return NSImage(systemSymbolName: name, accessibilityDescription: L("Battery"))
     }
 }
