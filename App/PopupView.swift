@@ -34,6 +34,17 @@ final class PopupView: NSView {
     /// Écart entre la fin du texte de valeur et le début de la jauge.
     private let valueGap: CGFloat = 42
 
+    /// Lignes réservées à la liste des processus.
+    ///
+    /// Hauteur **fixe** : le nombre de processus lisibles varie d'un tick à
+    /// l'autre (un process quitte la liste, un autre y entre), et caler la
+    /// hauteur sur ce nombre ferait sauter le panneau à chaque rafraîchissement.
+    private static let processRowCount = 10
+    private static let processRowHeight: CGFloat = 13
+    /// Largeur maximale du nom d'un processus : au-delà, il est tronqué pour
+    /// ne pas empiéter sur la colonne du pourcentage.
+    private let processNameWidth: CGFloat = 140
+
     /// Largeur du panneau : marge gauche, deux colonnes, l'écart des valeurs,
     /// puis la même marge qu'à gauche.
     ///
@@ -84,7 +95,11 @@ final class PopupView: NSView {
         height += 8                       // séparateur
         height += rowHeight + 4           // CPU
         height += CGFloat(snapshot.cpu.perCore.count) * 13 + 5
-        height += 8
+        height += 8                       // séparateur fin CPU
+        height += 13                      // titre « Top processes »
+        height += CGFloat(Self.processRowCount) * Self.processRowHeight
+        height += 5                       // espace sous les processus
+        height += 8                       // séparateur avant GPU
         height += rowHeight               // GPU
         if snapshot.gpu.inUseMemory > 0 { height += rowHeight - 4 }
         height += 8
@@ -167,13 +182,13 @@ final class PopupView: NSView {
              at: NSPoint(x: padding, y: y), font: .systemFont(ofSize: 10), color: secondary)
         y += rowHeight + 4
 
-        drawSeparator(y: y, appearance: appearance)
+        drawSeparator(y: y)
         y += 8
 
         // ---- CPU ----
         let cpuText = String(format: "%.0f %%", snapshot.cpu.total)
         drawRow(label: L("CPU"), value: cpuText, at: y, primary: primary, secondary: secondary,
-                fraction: snapshot.cpu.total / 100, appearance: appearance)
+                fraction: snapshot.cpu.total / 100)
         y += rowHeight + 4
 
         // Barres par cœur : dans l'ordre naturel (tel que rapporté par le système).
@@ -196,14 +211,34 @@ final class PopupView: NSView {
             y += 5
         }
 
-        drawSeparator(y: y, appearance: appearance)
+        drawSeparator(y: y)
+        y += 8
+
+        // ---- Processus les plus gourmands ----
+        // Classés par charge CPU (voir `ProcessReader`). La hauteur est fixe :
+        // on réserve toujours `processRowCount` lignes, que la liste soit
+        // pleine ou non, pour que le panneau ne se redimensionne pas à chaque
+        // rafraîchissement.
+        draw(L("Top processes"), at: NSPoint(x: padding, y: y),
+             font: .systemFont(ofSize: 10, weight: .semibold), color: secondary)
+        y += 13
+
+        let processes = snapshot.processes.prefix(Self.processRowCount)
+        for process in processes {
+            drawProcessRow(process, at: y, primary: primary, secondary: secondary)
+            y += Self.processRowHeight
+        }
+        y += CGFloat(Self.processRowCount - processes.count) * Self.processRowHeight
+        y += 5
+
+        drawSeparator(y: y)
         y += 8
 
         // ---- GPU ----
         drawRow(label: L("GPU"),
                 value: "\(snapshot.gpu.deviceUtilization) %",
                 at: y, primary: primary, secondary: secondary,
-                fraction: Double(snapshot.gpu.deviceUtilization) / 100, appearance: appearance)
+                fraction: Double(snapshot.gpu.deviceUtilization) / 100)
         y += rowHeight
 
         if snapshot.gpu.inUseMemory > 0 {
@@ -213,14 +248,14 @@ final class PopupView: NSView {
             y += rowHeight - 4
         }
 
-        drawSeparator(y: y, appearance: appearance)
+        drawSeparator(y: y)
         y += 8
 
         // ---- Mémoire ----
         drawRow(label: L("Memory"),
                 value: "\(Int(snapshot.memory.fraction * 100)) %",
                 at: y, primary: primary, secondary: secondary,
-                fraction: snapshot.memory.fraction, appearance: appearance)
+                fraction: snapshot.memory.fraction)
         y += rowHeight
         draw("\(Formatters.bytes(snapshot.memory.used)) / \(Formatters.bytes(snapshot.memory.total))",
              at: NSPoint(x: padding + 92, y: y), font: .systemFont(ofSize: 10), color: secondary)
@@ -231,19 +266,19 @@ final class PopupView: NSView {
              at: NSPoint(x: padding + 92, y: y), font: .systemFont(ofSize: 10), color: secondary)
         y += rowHeight
 
-        drawSeparator(y: y, appearance: appearance)
+        drawSeparator(y: y)
         y += 8
 
         // ---- Réseau ----
         drawRow(label: L("Network ↓"),
                 value: Formatters.rate(snapshot.network.downloadPerSecond),
                 at: y, primary: primary, secondary: secondary,
-                fraction: networkFraction, appearance: appearance)
+                fraction: networkFraction)
         y += rowHeight
         drawRow(label: L("Network ↑"),
                 value: Formatters.rate(snapshot.network.uploadPerSecond),
                 at: y, primary: primary, secondary: secondary,
-                fraction: networkFraction, appearance: appearance)
+                fraction: networkFraction)
         y += rowHeight
         if let interface = snapshot.network.activeInterface {
             draw(L("interface %@", interface), at: NSPoint(x: padding + 92, y: y),
@@ -251,7 +286,7 @@ final class PopupView: NSView {
             y += rowHeight - 4
         }
 
-        drawSeparator(y: y, appearance: appearance)
+        drawSeparator(y: y)
         y += 8
 
         // ---- Température ----
@@ -259,7 +294,7 @@ final class PopupView: NSView {
             drawRow(label: L("SoC temperature"),
                     value: snapshot.temperature.socPeak.map { String(format: "%.1f °C", $0) } ?? "—",
                     at: y, primary: primary, secondary: secondary,
-                    fraction: temperatureFraction, appearance: appearance)
+                    fraction: temperatureFraction)
             y += rowHeight
             let average = String(format: "%.1f", snapshot.temperature.socAverage ?? 0)
             let detail = L("avg %1$@ °C · %2$d measurement points",
@@ -271,7 +306,7 @@ final class PopupView: NSView {
 
         // ---- Batterie ----
         if snapshot.battery.isPresent {
-            drawSeparator(y: y, appearance: appearance)
+            drawSeparator(y: y)
             y += 8
             let symbol = snapshot.battery.isCharging ? "⚡︎ " : ""
             var text = "\(symbol)\(L("%d %%", snapshot.battery.level))"
@@ -287,7 +322,7 @@ final class PopupView: NSView {
             // priorité : le mode est réel dans les deux cas.
             if snapshot.battery.isLowPowerMode { text += L(" · low power") }
             drawRow(label: L("Battery"), value: text, at: y, primary: primary, secondary: secondary,
-                    fraction: Double(snapshot.battery.level) / 100, appearance: appearance,
+                    fraction: Double(snapshot.battery.level) / 100,
                     tint: GaugeColor.battery(level: snapshot.battery.level,
                                              isPlugged: snapshot.battery.isPlugged,
                                              isCharging: snapshot.battery.isCharging,
@@ -297,7 +332,7 @@ final class PopupView: NSView {
         }
 
         // ---- Pied de page ----
-        drawSeparator(y: y, appearance: appearance)
+        drawSeparator(y: y)
         y += 8
         let footer = L("Refresh %1$@  ·  click to close", Formatters.interval(Interval.current))
         draw(footer, at: NSPoint(x: padding, y: y), font: .systemFont(ofSize: 9), color: secondary)
@@ -316,14 +351,13 @@ final class PopupView: NSView {
         return max(0, min(1, (peak - 30) / 70))
     }
 
-    private func drawSeparator(y: CGFloat, appearance: NSAppearance) {
+    private func drawSeparator(y: CGFloat) {
         NSColor.separatorColor.withAlphaComponent(0.4).setStroke()
         let line = NSBezierPath()
         line.move(to: NSPoint(x: padding, y: y))
         line.line(to: NSPoint(x: bounds.width - padding, y: y))
         line.lineWidth = 0.5
         line.stroke()
-        _ = appearance
     }
 
     /// Ligne « libellé … valeur » avec jauge horizontale.
@@ -333,7 +367,7 @@ final class PopupView: NSView {
     /// couleur dépend du branchement et pas seulement du niveau.
     private func drawRow(label: String, value: String, at y: CGFloat,
                          primary: NSColor, secondary: NSColor,
-                         fraction: Double, appearance: NSAppearance,
+                         fraction: Double,
                          tint: NSColor? = nil) {
         draw(label, at: NSPoint(x: padding, y: y),
              font: .systemFont(ofSize: 11, weight: .medium), color: primary)
@@ -356,7 +390,6 @@ final class PopupView: NSView {
             (tint ?? GaugeColor.load(clamped)).setFill()
             NSBezierPath(roundedRect: filled, xRadius: 1.5, yRadius: 1.5).fill()
         }
-        _ = appearance
     }
 
     private func drawCoreBar(label: String, value: String, fraction: Double, at y: CGFloat,
@@ -380,6 +413,43 @@ final class PopupView: NSView {
             NSColor.systemGreen.withAlphaComponent(0.75).setFill()
             NSBezierPath(roundedRect: filled, xRadius: 1.5, yRadius: 1.5).fill()
         }
+    }
+
+    /// Ligne d'un processus : nom à gauche, charge CPU et mémoire à droite.
+    ///
+    /// Les colonnes de valeurs sont alignées sur celles des cœurs (`CPU`) et
+    /// sur le bord droit du panneau (`mémoire`) : deux références verticales
+    /// déjà présentes, plutôt qu'un troisième axe inventé.
+    private func drawProcessRow(_ process: ProcessUsage, at y: CGFloat,
+                                primary: NSColor, secondary: NSColor) {
+        let nameFont = NSFont.systemFont(ofSize: 9)
+        let name = truncated(process.name, toWidth: processNameWidth, font: nameFont)
+        draw(name, at: NSPoint(x: padding, y: y), font: nameFont, color: primary)
+
+        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+        let cpu = String(format: "%.1f %%", process.cpu)
+        drawRight(cpu, at: NSPoint(x: padding, y: y),
+                  rightEdge: padding + lineWidth + valueGap, font: valueFont, color: secondary)
+        let memory = Formatters.bytes(process.memory)
+        drawRight(memory, at: NSPoint(x: bounds.width / 2, y: y),
+                  rightEdge: bounds.width - padding, font: valueFont, color: secondary)
+    }
+
+    /// Tronque une chaîne pour qu'elle tienne dans `width`, `…` compris.
+    ///
+    /// `String.draw(at:)` ne coupe pas : un nom long déborderait sur la
+    /// colonne du pourcentage. On retire des caractères par la fin jusqu'à ce
+    /// que le résultat, ellipse incluse, tienne dans la largeur voulue.
+    private func truncated(_ string: String, toWidth width: CGFloat, font: NSFont) -> String {
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        guard string.size(withAttributes: attributes).width > width else { return string }
+        let ellipsis = "…"
+        let ellipsisWidth = ellipsis.size(withAttributes: attributes).width
+        var cut = string
+        while !cut.isEmpty, cut.size(withAttributes: attributes).width + ellipsisWidth > width {
+            cut.removeLast()
+        }
+        return cut + ellipsis
     }
 
     /// Texte calé sur le bord droit de la zone de contenu.

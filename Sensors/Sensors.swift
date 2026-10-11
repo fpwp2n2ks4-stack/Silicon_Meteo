@@ -69,7 +69,6 @@ public struct MemoryUsage {
     public var total: Double = 0            // octets
     public var compressed: Double = 0       // octets
     public var wired: Double = 0            // octets
-    public var swapUsed: Double = 0         // octets
 
     public var fraction: Double { total > 0 ? used / total : 0 }
 }
@@ -102,25 +101,13 @@ public struct NetworkUsage {
     /// resterait au vert pendant un vrai plafond. Une jauge qui ne ment
     /// pas vaut mieux qu'une jauge prétendument exacte.
     ///
-    /// L'échelle est donc **logarithmique**, avec des seuils nommés : un
-    /// transfert de fichier produit un pic, pas un niveau de charge, et
-    /// une échelle linéaire l'étalerait sur toute la hauteur. Les seuils
-    /// sont explicites pour que le passage vert → jaune → rouge se lise
-    /// dans le code au lieu d'être caché dans une division.
+    /// L'échelle est donc **logarithmique** : un transfert de fichier produit
+    /// un pic, pas un niveau de charge, et une échelle linéaire l'étalerait
+    /// sur toute la hauteur.
     ///
-    /// Fraction de jauge, alignée sur les deux seuils ci-dessus.
-    ///
-    /// `GaugeColor.load` bascule à 0,60 puis 0,80. L'échelle est donc
-    /// calibrée pour que **chaque seuil nommé tombe exactement sur sa
-    /// frontière de couleur** — sinon le commentaire annoncerait 1,5 Mo/s
-    /// alors que le jaune arrive à 1,0, et la jauge contredirait sa
-    /// propre documentation.
-    ///
-    /// `greenBelowBytesPerSecond` produit 0,5999997 et `yellowBelow…`
-    /// 0,7999997 : les deux restent **juste en dessous** de la bascule,
-    /// parce que la racine de 10 n'a pas de représentation exacte en
-    /// flottant. Le seuil est donc le dernier débit encore dans la couleur
-    /// inférieure, pas le premier dans la suivante.
+    /// `GaugeColor.load` bascule à 0,60 puis 0,80 : l'échelle place donc le
+    /// vert sous ≈ 1,48 Mo/s et le jaune sous ≈ 3,88 Mo/s, seuils que l'on
+    /// peut lire directement dans la formule ci-dessous.
     ///
     /// - Parameter bytesPerSecond: le plus élevé des deux débits, mesuré sur
     ///   l'interface active — une jauge ne montre pas le trafic cumulé de
@@ -130,15 +117,6 @@ public struct NetworkUsage {
         let normalized = log10(1 + bytesPerSecond / 100_000) / 2
         return min(1, max(0, normalized))
     }
-
-    /// Dernier débit encore vert : 1 484 892 o/s, soit ≈ 1,48 Mo/s.
-    ///
-    /// Résolu à partir de l'échelle — `b = 100 000 × (10^(2f) − 1)` avec
-    /// `f = 0,60` — plutôt que recopié d'une mesure, pour que les deux
-    /// restent justes si la normalisation change.
-    public static let greenBelowBytesPerSecond: Double = 1_484_892
-    /// Dernier débit encore jaune : 3 881 071 o/s, soit ≈ 3,88 Mo/s.
-    public static let yellowBelowBytesPerSecond: Double = 3_881_071
 }
 
 public struct BatteryStatus {
@@ -156,9 +134,6 @@ public struct BatteryStatus {
     /// un **mode**, pas un seuil. Voir `GaugeColor.battery`.
     public var isLowPowerMode: Bool = false
     public var timeRemainingMinutes: Int? = nil
-    public var temperature: Double? = nil
-    public var cycleCount: Int? = nil
-    public var healthPercent: Int? = nil
     public var isPresent: Bool = false
     // swiftlint:enable implicit_optional_initialization
 
@@ -197,10 +172,6 @@ public struct BatteryStatus {
 
 public struct GPUUsage {
     public var deviceUtilization: Int = 0     // 0...100
-    public var rendererUtilization: Int = 0
-    public var tilerUtilization: Int = 0
-    public var coreCount: Int = 0
-    public var model: String = ""
     public var inUseMemory: Double = 0         // octets
 }
 
@@ -212,9 +183,16 @@ public struct Temperature {
     public var socPeak: Double? = nil
     // swiftlint:enable implicit_optional_initialization
     public var dieCount: Int = 0
-    public var sensorNames: [String] = []
-    /// Détail par capteur, trié du plus chaud au plus froid
-    public var sensors: [(name: String, celsius: Double)] = []
+}
+
+/// Charge d'un processus, telle qu'affichée dans la liste des plus gourmands.
+public struct ProcessUsage: Sendable {
+    public var name: String = ""
+    /// Charge CPU en pourcentage. Peut dépasser 100 : comme Activity Monitor,
+    /// on **somme** le temps de tous les threads du processus.
+    public var cpu: Double = 0
+    /// Mémoire résidente (RSS) en octets — `pti_resident_size`.
+    public var memory: Double = 0
 }
 
 public struct Snapshot {
@@ -224,6 +202,7 @@ public struct Snapshot {
     public var battery: BatteryStatus = BatteryStatus()
     public var gpu: GPUUsage = GPUUsage()
     public var temperature: Temperature = Temperature()
+    public var processes: [ProcessUsage] = []
     public var date: Date = Date()
 }
 
@@ -347,9 +326,7 @@ public struct MemoryReader: Sendable {
             used: active + wired + compressed,
             total: Double(ProcessInfo.processInfo.physicalMemory),
             compressed: compressed,
-            wired: wired,
-            // `swap_count` = pages actuellement(populés dans le fichier d'échange.
-            swapUsed: Double(stats.swap_count) * Double(vm_page_size)
+            wired: wired
         )
     }
 }
@@ -467,9 +444,6 @@ public struct BatteryReader: Sendable {
             isPlugged: plugged,
             isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
             timeRemainingMinutes: (remaining ?? 0) > 0 ? remaining : nil,
-            temperature: nil,
-            cycleCount: nil,
-            healthPercent: nil,
             isPresent: true,
             notChargingReason: self.notChargingReason()
         )
@@ -522,57 +496,14 @@ public final class GPUReader: @unchecked Sendable {
 
             var usage = GPUUsage()
             usage.deviceUtilization = stats["Device Utilization %"] as? Int ?? 0
-            usage.rendererUtilization = stats["Renderer Utilization %"] as? Int ?? 0
-            usage.tilerUtilization = stats["Tiler Utilization %"] as? Int ?? 0
             usage.inUseMemory = Double(stats["In use system memory"] as? Int ?? 0)
             if best == nil || usage.deviceUtilization > best!.deviceUtilization {
                 best = usage
             }
         }
 
-        if var best {
-            // Le modèle et le nombre de cœurs ne changent pas : on ne les
-            // relit qu'une fois, pour éviter un parcours IORegistry inutile.
-            if cached.model.isEmpty {
-                best.model = discoverModel()
-                best.coreCount = discoverCoreCount()
-            } else {
-                best.model = cached.model
-                best.coreCount = cached.coreCount
-            }
-            cached = best
-        }
+        if let best { cached = best }
         return cached
-    }
-
-    private func discoverModel() -> String {
-        var iterator: io_iterator_t = 0
-        defer { IOObjectRelease(iterator) }
-        guard IOServiceGetMatchingServices(kIOMainPortDefault,
-                                          IOServiceMatching("IOAccelerator"),
-                                          &iterator) == kIOReturnSuccess else { return "GPU" }
-        while case let service = IOIteratorNext(iterator), service != 0 {
-            defer { IOObjectRelease(service) }
-            if let model = ioProperty(service, "model") as? String, !model.isEmpty {
-                return model
-            }
-        }
-        return "GPU"
-    }
-
-    private func discoverCoreCount() -> Int {
-        var iterator: io_iterator_t = 0
-        defer { IOObjectRelease(iterator) }
-        guard IOServiceGetMatchingServices(kIOMainPortDefault,
-                                          IOServiceMatching("IOAccelerator"),
-                                          &iterator) == kIOReturnSuccess else { return 0 }
-        while case let service = IOIteratorNext(iterator), service != 0 {
-            defer { IOObjectRelease(service) }
-            if let count = ioProperty(service, "gpu-core-count") as? Int, count > 0 {
-                return count
-            }
-        }
-        return 0
     }
 }
 
@@ -602,7 +533,6 @@ public final class TemperatureReader: @unchecked Sendable {
     /// thermiques. Indispensable de les mémoriser : le tableau contient aussi
     /// des services sans rapport, dont on ne garde pas le nom.
     private var matchedIndices: [Int] = []
-    private var names: [String] = []
     private var lastRead: Date?
 
     public init() {
@@ -634,7 +564,6 @@ public final class TemperatureReader: @unchecked Sendable {
         // évite un plantage si le type change d'une version de SDK à l'autre.
         guard let array = ownedArray.takeUnretainedValue() as? NSArray else { return }
         var foundIndices: [Int] = []
-        var foundNames: [String] = []
         for index in 0..<array.count {
             let service = array[index] as CFTypeRef
             guard let owned = hidServiceCopyProperty(service, "Product" as CFString) else { continue }
@@ -643,10 +572,8 @@ public final class TemperatureReader: @unchecked Sendable {
             let name = owned.takeRetainedValue() as? String
             guard let name, name.hasPrefix("PMU"), name.contains("tdie") else { continue }
             foundIndices.append(index)
-            foundNames.append(name)
         }
         matchedIndices = foundIndices
-        names = foundNames
     }
 
     private func releaseResources() {
@@ -655,7 +582,6 @@ public final class TemperatureReader: @unchecked Sendable {
         client?.release()
         client = nil
         matchedIndices = []
-        names = []
     }
 
     public func read() -> Temperature {
@@ -670,8 +596,8 @@ public final class TemperatureReader: @unchecked Sendable {
             return Temperature()
         }
 
-        var values: [(String, Double)] = []
-        for (position, arrayIndex) in matchedIndices.enumerated() where position < names.count {
+        var values: [Double] = []
+        for arrayIndex in matchedIndices {
             let service = array[arrayIndex] as CFTypeRef
             guard let ownedEvent = hidServiceCopyEvent(service,
                                                         kHIDEventTypeTemperature,
@@ -688,18 +614,108 @@ public final class TemperatureReader: @unchecked Sendable {
 
             // Certains capteurs rapportent des valeurs aberrantes au repos.
             guard celsius > 5, celsius < 120 else { continue }
-            values.append((names[position], celsius))
+            values.append(celsius)
         }
 
         guard !values.isEmpty else { return Temperature() }
-        let total = values.reduce(0.0) { $0 + $1.1 }
+        let total = values.reduce(0) { $0 + $1 }
         return Temperature(
             socAverage: total / Double(values.count),
-            socPeak: values.map(\.1).max(),
-            dieCount: values.count,
-            sensorNames: names,
-            sensors: values.sorted { $0.1 > $1.1 }
+            socPeak: values.max(),
+            dieCount: values.count
         )
+    }
+}
+
+// MARK: - Processus
+
+/// Liste les processus les plus gourmands en CPU via `libproc`.
+///
+/// Aucun helper privilégié ni sous-processus : on interroge l'API système
+/// `proc_listallpids` / `proc_pidinfo` (`PROC_PIDTASKINFO`), qui expose le
+/// temps CPU **cumulé** et la mémoire résidente de chaque processus.
+///
+/// Le pourcentage ne se lit pas directement : c'est un **débit**, donc une
+/// différence entre deux échantillons rapportée au temps réel écoulé. Le
+/// collecteur appelant déjà `read()` toutes les 2 s, ce lecteur mémorise le
+/// tick précédent. Au premier appel, faute de référence, tous les débits
+/// valent 0 — comme `NetworkReader`.
+///
+/// Limite assumée : les processus appartenant à un autre utilisateur, ou
+/// protégés par le noyau (SIP, `kernel_task`), refusent `proc_pidinfo` et
+/// sont simplement ignorés. Les déduire exigerait des privilèges qu'un
+/// moniteur de barre de menus n'a pas à réclamer.
+public final class ProcessReader: @unchecked Sendable {
+    private struct Sample {
+        var cpuTime: UInt64
+        var memory: UInt64
+    }
+    private var previous: [Int32: Sample] = [:]
+    private var lastDate: Date?
+
+    public init() {}
+
+    /// Liste des PID, dimensionnée par un premier appel qui ne remplit rien.
+    ///
+    /// `proc_listallpids(nil, 0)` renvoie le **nombre** de PID (le wrapper
+    /// libproc divise déjà la taille d'octets par `sizeof(int)`). Le second
+    /// appel renvoie le nombre réellement écrit, qui peut être plus petit si
+    /// des processus ont disparu entre-temps.
+    private static func allPIDs() -> [pid_t] {
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return [] }
+        var pids = [pid_t](repeating: 0, count: Int(count))
+        let written = pids.withUnsafeMutableBufferPointer { buffer in
+            proc_listallpids(buffer.baseAddress,
+                             Int32(buffer.count * MemoryLayout<pid_t>.stride))
+        }
+        guard written > 0 else { return [] }
+        return Array(pids.prefix(Int(written)))
+    }
+
+    /// Nom court du processus (`proc_name`), ou `nil` s'il n'est pas lisible.
+    private static func name(for pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 256)
+        guard proc_name(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    public func read(limit: Int = 10) -> [ProcessUsage] {
+        let now = Date()
+        let elapsed = lastDate.map { now.timeIntervalSince($0) } ?? 0
+
+        var current: [Int32: Sample] = [:]
+        var usages: [ProcessUsage] = []
+        let secondsNanoseconds = 1_000_000_000.0
+
+        for pid in Self.allPIDs() where pid > 0 {
+            var info = proc_taskinfo()
+            let size = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info,
+                                    Int32(MemoryLayout<proc_taskinfo>.size))
+            guard size > 0 else { continue }
+
+            let sample = Sample(cpuTime: info.pti_total_user &+ info.pti_total_system,
+                                memory: info.pti_resident_size)
+            current[pid] = sample
+
+            // Un PID réutilisé peut afficher un compteur plus petit : dans ce
+            // cas la différence serait absurde, on repart de zéro.
+            var cpu: Double = 0
+            if elapsed > 0, let old = previous[pid], sample.cpuTime >= old.cpuTime {
+                cpu = Double(sample.cpuTime - old.cpuTime) / (elapsed * secondsNanoseconds) * 100
+            }
+
+            usages.append(ProcessUsage(name: Self.name(for: pid) ?? "pid \(pid)",
+                                       cpu: cpu,
+                                       memory: Double(sample.memory)))
+        }
+
+        previous = current
+        lastDate = now
+
+        return Array(usages
+            .sorted { $0.cpu == $1.cpu ? $0.memory > $1.memory : $0.cpu > $1.cpu }
+            .prefix(limit))
     }
 }
 
@@ -712,6 +728,7 @@ public final class MetricsCollector: @unchecked Sendable {
     private let battery = BatteryReader()
     private let gpu = GPUReader()
     private let temperature = TemperatureReader()
+    private let process = ProcessReader()
 
     public init() {}
 
@@ -725,6 +742,7 @@ public final class MetricsCollector: @unchecked Sendable {
             battery: battery.read(),
             gpu: gpu.read(),
             temperature: temperature.read(),
+            processes: process.read(),
             date: Date()
         )
     }

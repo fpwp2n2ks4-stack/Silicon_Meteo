@@ -14,9 +14,6 @@ let snapshot = { () -> Snapshot in
     s.cpu.total = 87
     s.cpu.perCore = [99, 96, 92, 88, 85, 90, 97, 81, 78, 84]
     s.gpu.deviceUtilization = 94
-    s.gpu.rendererUtilization = 96
-    s.gpu.model = "Apple M5"
-    s.gpu.coreCount = 10
     s.gpu.inUseMemory = 1.8e9
     s.memory.used = 20.1e9
     s.memory.total = 25.8e9
@@ -32,6 +29,18 @@ let snapshot = { () -> Snapshot in
     s.temperature.socPeak = 68.4
     s.temperature.socAverage = 61.2
     s.temperature.dieCount = 24
+    s.processes = [
+        ProcessUsage(name: "Google Chrome", cpu: 142.7, memory: 4.2e9),
+        ProcessUsage(name: "Google Chrome Helper (Renderer)", cpu: 63.1, memory: 1.8e9),
+        ProcessUsage(name: "WindowServer", cpu: 41.5, memory: 980e6),
+        ProcessUsage(name: "kernel_task", cpu: 28.9, memory: 0),
+        ProcessUsage(name: "Xcode", cpu: 22.4, memory: 3.1e9),
+        ProcessUsage(name: "com.apple.WebKit.GPU", cpu: 14.0, memory: 410e6),
+        ProcessUsage(name: "WindowServerHelperNomTresLong", cpu: 9.8, memory: 220e6),
+        ProcessUsage(name: "mds_stores", cpu: 6.3, memory: 180e6),
+        ProcessUsage(name: "Toasty", cpu: 1.2, memory: 24e6),
+        ProcessUsage(name: "Terminal", cpu: 0.4, memory: 88e6)
+    ]
     s.date = Date()
     return s
 }()
@@ -79,7 +88,6 @@ render(popup, to: "verify/panel.png")
 // version invisible (piste grise sur fond clair) ne se voyait pas. On la
 // composite donc sur les deux fonds possibles — barre claire et barre sombre.
 let status = StatusItemView(snapshot: snapshot)
-status.batterySymbol = NSImage(systemSymbolName: "battery.25", accessibilityDescription: nil)
 status.frame = NSRect(origin: .zero, size: status.intrinsicContentSize)
 
 func renderOnMenuBar(_ view: NSView, dark: Bool, to path: String) {

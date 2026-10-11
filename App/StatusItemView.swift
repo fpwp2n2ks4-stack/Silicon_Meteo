@@ -31,11 +31,6 @@ final class StatusItemView: NSView {
         didSet { needsDisplay = true }
     }
 
-    /// Icône de batterie dessinée par le système (nil sur Mac de bureau).
-    var batterySymbol: NSImage? {
-        didSet { needsDisplay = true }
-    }
-
     private let barWidth: CGFloat = 5
     private let barHeight: CGFloat = 10
     private let spacing: CGFloat = 3

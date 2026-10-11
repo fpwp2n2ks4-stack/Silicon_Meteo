@@ -251,24 +251,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         snapshot.network.downloadPerSecond = average * ratio
         snapshot.network.uploadPerSecond = average * (1 - ratio)
     }
-
-    /// Icône de batterie adaptée au niveau, tirée des symboles SF.
-    ///
-    /// SF Symbols expose `battery.100`, `battery.75`… mais le rendu varie
-    /// selon la taille ; on garde une seule hauteur pour un alignement net.
-    private func batterySymbol(for battery: BatteryStatus) -> NSImage? {
-        guard battery.isPresent else { return nil }
-        let level = max(0, min(100, battery.level))
-        // Paliers SF Symbols disponibles.
-        let step: Int
-        switch level {
-        case 100...:  step = 100
-        case 76...99: step = 75
-        case 51...75: step = 50
-        case 26...50: step = 25
-        default:      step = 0
-        }
-        let name = battery.isCharging ? "battery.100.bolt" : "battery.\(step)"
-        return NSImage(systemSymbolName: name, accessibilityDescription: L("Battery"))
-    }
 }

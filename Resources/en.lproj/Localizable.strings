@@ -2,6 +2,7 @@
 
 "CPU" = "CPU";
 "GPU" = "GPU";
+"Top processes" = "Top processes";
 "Core %d" = "Core %d";
 "Video memory %@" = "Video memory %@";
 "Memory" = "Memory";
