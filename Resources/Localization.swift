@@ -22,6 +22,7 @@ enum Localization {
         ("en", "English"),
         ("fr", "Français"),
         ("es", "Español"),
+        ("mg", "Malagasy"),
     ]
 
     private static let preferenceKey = "appLanguage"

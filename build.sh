@@ -91,6 +91,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
         <string>en</string>
         <string>fr</string>
         <string>es</string>
+        <string>mg</string>
     </array>
     <key>CFBundleExecutable</key>
     <string>$APP_NAME</string>
