@@ -82,7 +82,7 @@ final class PopupView: NSView {
         var height = padding * 2
         height += rowHeight * 2 + 4      // en-tête : modèle + heure
         height += 8                       // séparateur
-        height += rowHeight               // CPU
+        height += rowHeight + 4           // CPU
         height += CGFloat(snapshot.cpu.perCore.count) * 13 + 5
         height += 8
         height += rowHeight               // GPU
@@ -174,7 +174,7 @@ final class PopupView: NSView {
         let cpuText = String(format: "%.0f %%", snapshot.cpu.total)
         drawRow(label: L("CPU"), value: cpuText, at: y, primary: primary, secondary: secondary,
                 fraction: snapshot.cpu.total / 100, appearance: appearance)
-        y += rowHeight
+        y += rowHeight + 4
 
         // Barres par cœur : dans l'ordre naturel (tel que rapporté par le système).
         // On n'effectue pas de tri par charge : cela ferait sauter les numéros
