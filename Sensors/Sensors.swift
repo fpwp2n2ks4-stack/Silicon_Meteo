@@ -724,6 +724,38 @@ public final class ProcessReader: @unchecked Sendable {
     }
 }
 
+// MARK: - Contrôle des processus
+
+/// Terminaison d'un processus, exposée à l'interface.
+///
+/// On reste sur `kill(2)` du noyau : aucune API privilégiée, et la portée est
+/// celle de l'utilisateur qui a lancé Toasty — un processus appartenant à un
+/// autre utilisateur (ou protégé par SIP) refusera avec `EPERM`, que l'appelant
+/// traduit en message.
+public enum ProcessControl {
+
+    /// Le PID peut-il être terminé par cette application ?
+    ///
+    /// On refuse le noyau (`pid 0`, exposé comme `kernel_task`), `launchd`
+    /// (`pid 1`) et Toasty elle-même : les trois feraient tomber la session ou
+    /// l'application. La vérification est faite **avant** d'afficher le bouton,
+    /// pour que l'affordance corresponde à ce qui est réellement possible.
+    public static func canTerminate(_ pid: Int32) -> Bool {
+        pid > 1 && pid != getpid()
+    }
+
+    /// Envoie `SIGTERM` au processus. Renvoie `true` si le noyau a accepté.
+    ///
+    /// `SIGTERM` (et non `SIGKILL`) laisse au processus le temps de fermer
+    /// proprement ses fichiers et ses connexions. Un échec (`EPERM` pour un
+    /// processus protégé, `ESRCH` s'il vient de quitter) est signalé par
+    /// `false`, sans lever d'exception.
+    @discardableResult
+    public static func terminate(_ pid: Int32) -> Bool {
+        canTerminate(pid) && kill(pid, SIGTERM) == 0
+    }
+}
+
 // MARK: - Agrégateur
 
 public final class MetricsCollector: @unchecked Sendable {

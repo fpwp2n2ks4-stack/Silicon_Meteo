@@ -19,6 +19,8 @@
 "%1$@ - %2$d cores" = "%1$@ - %2$d fo";
 "Language" = "Fiteny";
 "Quit" = "Fialàna";
+"Could not quit %@" = "Tsy afaka namarana ny %@";
+"OK" = "OK";
 
 /* Unités sy endrika */
 "B" = "o";

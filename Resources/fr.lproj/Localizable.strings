@@ -19,6 +19,8 @@
 "%1$@ - %2$d cores" = "%1$@ - %2$d cœurs";
 "Language" = "Langue";
 "Quit" = "Quitter";
+"Could not quit %@" = "Impossible de quitter %@";
+"OK" = "OK";
 
 /* Unités et formats */
 "B" = "o";

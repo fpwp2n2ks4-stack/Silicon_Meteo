@@ -19,6 +19,8 @@
 "%1$@ - %2$d cores" = "%1$@ - %2$d núcleos";
 "Language" = "Idioma";
 "Quit" = "Salir";
+"Could not quit %@" = "No se pudo cerrar %@";
+"OK" = "OK";
 
 /* Unidades y formatos */
 "B" = "B";

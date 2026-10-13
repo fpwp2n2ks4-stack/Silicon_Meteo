@@ -182,6 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = NSViewController()
         let view = PopupView(snapshot: latest, coreCount: coreCount)
         view.popover = popover
+        view.onQuitProcess = { [weak self] process in
+            self?.quitProcess(process)
+        }
         controller.view = view
         popover.contentViewController = controller
         popover.contentSize = view.frame.size
@@ -197,6 +200,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func closePopover() {
         popover.performClose(nil)
+    }
+
+    /// Demande la terminaison d'un processus depuis le bouton × du panneau.
+    ///
+    /// En cas de succès, on relit immédiatement les métriques pour faire
+    /// disparaître la ligne sans attendre le tick suivant. En cas d'échec
+    /// (processus protégé par SIP, appartenant à un autre utilisateur…), une
+    /// alerte l'explique : un échec muet ferait croire à un bug.
+    private func quitProcess(_ process: ProcessUsage) {
+        guard ProcessControl.terminate(process.pid) else {
+            presentQuitFailure(for: process)
+            return
+        }
+        refresh()
+    }
+
+    private func presentQuitFailure(for process: ProcessUsage) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L("Could not quit %@", process.name)
+        alert.addButton(withTitle: L("OK"))
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     // MARK: - Boucle de collecte

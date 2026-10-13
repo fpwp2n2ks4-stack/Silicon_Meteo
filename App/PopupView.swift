@@ -7,8 +7,10 @@ import AppKit
 
 /// Panneau de détail affiché sous la barre de menus.
 ///
-/// Volontairement sans bouton ni contrôle interactif : c'est une lecture.
-/// Seuls « Quitter » et le rafraîchissement sont accessibles au clavier.
+/// Panneau de lecture, à une exception près : une ligne de la liste des
+/// processus révèle un bouton × au survol, qui demande la terminaison du
+/// processus à `AppDelegate`. Tout le reste est en lecture seule, et seuls
+/// « Quitter » et le rafraîchissement sont accessibles au clavier.
 final class PopupView: NSView {
 
     var snapshot: Snapshot {
@@ -26,6 +28,28 @@ final class PopupView: NSView {
 
     /// Renseignée par `AppDelegate` : nécessaire pour redimensionner le popover.
     weak var popover: NSPopover?
+
+    /// Appelée lorsqu'un clic tombe sur le bouton × d'une ligne de processus.
+    /// Renseignée par `AppDelegate`, qui se charge de la terminaison effective.
+    var onQuitProcess: ((ProcessUsage) -> Void)?
+
+    /// Zone cliquable d'une ligne : sa géométrie est calculée au dessin, donc
+    /// mémorisée ici pour le test de survol et de clic.
+    private struct ProcessRow {
+        let process: ProcessUsage
+        let rowRect: NSRect
+        let killRect: NSRect
+        let killable: Bool
+    }
+
+    /// Rempli à chaque `draw`, lu par `mouseMoved`/`mouseDown`.
+    private var processRows: [ProcessRow] = []
+    /// Indice de la ligne survolée, ou `nil`. Piloté uniquement par la souris.
+    private var hoveredIndex: Int?
+
+    /// Largeur réservée, au bord droit, au bouton × de terminaison. La colonne
+    /// mémoire se décale d'autant pour que rien ne bouge à l'apparition du ×.
+    private let killColumnWidth: CGFloat = 18
 
     private let coreCount: Int
     private let padding: CGFloat = 14
@@ -120,6 +144,66 @@ final class PopupView: NSView {
 
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
+
+    // MARK: - Survol et terminaison
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Sans ce drapeau, la fenêtre ne relaie pas `mouseMoved` : aucun survol.
+        window?.acceptsMouseMovedEvents = true
+    }
+
+    /// Réinstalle la zone de suivi à chaque changement de géométrie.
+    ///
+    /// `NSTrackingArea` est recalculée par AppKit à chaque `draw`, mais on la
+    /// pose dans `bounds` : `.inVisibleRect` la suit automatiquement quand le
+    /// panneau se redimensionne (batterie branchée/débranchée).
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        let area = NSTrackingArea(rect: bounds,
+                                  options: [.mouseMoved, .mouseEnteredAndExited,
+                                            .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let index = processRows.firstIndex { $0.rowRect.contains(point) }
+        if index != hoveredIndex {
+            hoveredIndex = index
+            needsDisplay = true
+        }
+        refreshCursor(at: point)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if hoveredIndex != nil {
+            hoveredIndex = nil
+            needsDisplay = true
+        }
+        NSCursor.arrow.set()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        // Seule la zone du × déclenche la terminaison : cliquer ailleurs sur la
+        // ligne ne fait rien, pour ne pas tuer un processus par mégarde.
+        guard let row = processRows.first(where: {
+            $0.killable && $0.killRect.contains(point)
+        }) else {
+            super.mouseDown(with: event)
+            return
+        }
+        onQuitProcess?(row.process)
+    }
+
+    /// Curseur main au-dessus du ×, flèche partout ailleurs.
+    private func refreshCursor(at point: NSPoint) {
+        let overKill = processRows.contains { $0.killable && $0.killRect.contains(point) }
+        (overKill ? NSCursor.pointingHand : NSCursor.arrow).set()
+    }
 
     private func textColor(_ appearance: NSAppearance) -> NSColor {
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
@@ -223,9 +307,32 @@ final class PopupView: NSView {
              font: .systemFont(ofSize: 10, weight: .semibold), color: secondary)
         y += 13
 
-        let processes = snapshot.processes.prefix(Self.processRowCount)
-        for process in processes {
+        // La géométrie de chaque ligne est recalculée ici : c'est le seul
+        // endroit qui connaisse les positions, et `mouseMoved`/`mouseDown` la
+        // relisent ensuite pour le survol et le clic.
+        processRows.removeAll(keepingCapacity: true)
+        let processes = Array(snapshot.processes.prefix(Self.processRowCount))
+        for (index, process) in processes.enumerated() {
+            let rowRect = NSRect(x: 4, y: y - 1,
+                                 width: bounds.width - 8, height: Self.processRowHeight)
+            let killRect = NSRect(x: bounds.width - padding - killColumnWidth, y: y,
+                                  width: killColumnWidth, height: Self.processRowHeight)
+            let killable = ProcessControl.canTerminate(process.pid)
+            processRows.append(ProcessRow(process: process, rowRect: rowRect,
+                                          killRect: killRect, killable: killable))
+
+            if hoveredIndex == index {
+                secondary.withAlphaComponent(0.1).setFill()
+                NSBezierPath(roundedRect: rowRect, xRadius: 4, yRadius: 4).fill()
+            }
+
             drawProcessRow(process, at: y, primary: primary, secondary: secondary)
+
+            // Le × n'apparaît que sur la ligne survolée et tuable : l'affordance
+            // suit exactement ce que `ProcessControl` autorise.
+            if hoveredIndex == index, killable {
+                drawKillButton(at: y, color: secondary)
+            }
             y += Self.processRowHeight
         }
         y += CGFloat(Self.processRowCount - processes.count) * Self.processRowHeight
@@ -423,9 +530,8 @@ final class PopupView: NSView {
     /// réservée **dans** la largeur allouée au nom, sinon un nom long le
     /// pousserait sous la colonne du pourcentage CPU.
     ///
-    /// Les colonnes de valeurs sont alignées sur celles des cœurs (`CPU`) et
-    /// sur le bord droit du panneau (`mémoire`) : deux références verticales
-    /// déjà présentes, plutôt qu'un troisième axe inventé.
+    /// Les colonnes de valeurs sont alignées sur celles des cœurs (`CPU`) et,
+    /// pour la mémoire, sur la colonne réservée au bouton × (bord droit).
     private func drawProcessRow(_ process: ProcessUsage, at y: CGFloat,
                                 primary: NSColor, secondary: NSColor) {
         let nameFont = NSFont.systemFont(ofSize: 9)
@@ -449,7 +555,22 @@ final class PopupView: NSView {
                   rightEdge: padding + lineWidth + valueGap, font: valueFont, color: secondary)
         let memory = Formatters.bytes(process.memory)
         drawRight(memory, at: NSPoint(x: bounds.width / 2, y: y),
-                  rightEdge: bounds.width - padding, font: valueFont, color: secondary)
+                  rightEdge: bounds.width - padding - killColumnWidth,
+                  font: valueFont, color: secondary)
+    }
+
+    /// Bouton de terminaison, dessiné uniquement sur la ligne survolée.
+    ///
+    /// Un simple glyphe « ✕ » plutôt qu'un contrôle AppKit : le panneau est
+    /// dessiné à la main, et la zone cliquable est fournie par `killRect`.
+    private func drawKillButton(at y: CGFloat, color: NSColor) {
+        let font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let glyph = "✕"
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        let size = glyph.size(withAttributes: attributes)
+        let columnLeft = bounds.width - padding - killColumnWidth
+        let x = columnLeft + (killColumnWidth - size.width) / 2
+        glyph.draw(at: NSPoint(x: x, y: y), withAttributes: attributes)
     }
 
     /// Tronque une chaîne pour qu'elle tienne dans `width`, `…` compris.
