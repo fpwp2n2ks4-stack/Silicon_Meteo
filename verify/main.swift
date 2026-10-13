@@ -30,16 +30,16 @@ let snapshot = { () -> Snapshot in
     s.temperature.socAverage = 61.2
     s.temperature.dieCount = 24
     s.processes = [
-        ProcessUsage(name: "Google Chrome", cpu: 142.7, memory: 4.2e9),
-        ProcessUsage(name: "Google Chrome Helper (Renderer)", cpu: 63.1, memory: 1.8e9),
-        ProcessUsage(name: "WindowServer", cpu: 41.5, memory: 980e6),
-        ProcessUsage(name: "kernel_task", cpu: 28.9, memory: 0),
-        ProcessUsage(name: "Xcode", cpu: 22.4, memory: 3.1e9),
-        ProcessUsage(name: "com.apple.WebKit.GPU", cpu: 14.0, memory: 410e6),
-        ProcessUsage(name: "WindowServerHelperNomTresLong", cpu: 9.8, memory: 220e6),
-        ProcessUsage(name: "mds_stores", cpu: 6.3, memory: 180e6),
-        ProcessUsage(name: "Toasty", cpu: 1.2, memory: 24e6),
-        ProcessUsage(name: "Terminal", cpu: 0.4, memory: 88e6)
+        ProcessUsage(name: "Google Chrome", pid: 4021, cpu: 142.7, memory: 4.2e9),
+        ProcessUsage(name: "Google Chrome Helper (Renderer)", pid: 4118, cpu: 63.1, memory: 1.8e9),
+        ProcessUsage(name: "WindowServer", pid: 218, cpu: 41.5, memory: 980e6),
+        ProcessUsage(name: "kernel_task", pid: 0, cpu: 28.9, memory: 0),
+        ProcessUsage(name: "Xcode", pid: 1733, cpu: 22.4, memory: 3.1e9),
+        ProcessUsage(name: "com.apple.WebKit.GPU", pid: 5220, cpu: 14.0, memory: 410e6),
+        ProcessUsage(name: "WindowServerHelperNomTresLong", pid: 9087, cpu: 9.8, memory: 220e6),
+        ProcessUsage(name: "mds_stores", pid: 341, cpu: 6.3, memory: 180e6),
+        ProcessUsage(name: "Toasty", pid: 65535, cpu: 1.2, memory: 24e6),
+        ProcessUsage(name: "Terminal", pid: 1290, cpu: 0.4, memory: 88e6)
     ]
     s.date = Date()
     return s

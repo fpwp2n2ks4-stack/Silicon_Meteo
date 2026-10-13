@@ -188,6 +188,10 @@ public struct Temperature {
 /// Charge d'un processus, telle qu'affichée dans la liste des plus gourmands.
 public struct ProcessUsage: Sendable {
     public var name: String = ""
+    /// Identifiant du processus (`pid_t`). Affiché à côté du nom pour
+    /// distinguer deux processus homonymes — plusieurs « Google Chrome
+    /// Helper » partagent le même nom, seul le PID les sépare.
+    public var pid: Int32 = 0
     /// Charge CPU en pourcentage. Peut dépasser 100 : comme Activity Monitor,
     /// on **somme** le temps de tous les threads du processus.
     public var cpu: Double = 0
@@ -706,6 +710,7 @@ public final class ProcessReader: @unchecked Sendable {
             }
 
             usages.append(ProcessUsage(name: Self.name(for: pid) ?? "pid \(pid)",
+                                       pid: Int32(pid),
                                        cpu: cpu,
                                        memory: Double(sample.memory)))
         }

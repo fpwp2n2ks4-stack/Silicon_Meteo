@@ -415,7 +415,13 @@ final class PopupView: NSView {
         }
     }
 
-    /// Ligne d'un processus : nom à gauche, charge CPU et mémoire à droite.
+    /// Ligne d'un processus : nom puis PID à gauche, charge CPU et mémoire à
+    /// droite.
+    ///
+    /// Le PID suit immédiatement le nom : il départage deux processus
+    /// homonymes (plusieurs « Helper » partagent le même nom). Sa place est
+    /// réservée **dans** la largeur allouée au nom, sinon un nom long le
+    /// pousserait sous la colonne du pourcentage CPU.
     ///
     /// Les colonnes de valeurs sont alignées sur celles des cœurs (`CPU`) et
     /// sur le bord droit du panneau (`mémoire`) : deux références verticales
@@ -423,10 +429,21 @@ final class PopupView: NSView {
     private func drawProcessRow(_ process: ProcessUsage, at y: CGFloat,
                                 primary: NSColor, secondary: NSColor) {
         let nameFont = NSFont.systemFont(ofSize: 9)
-        let name = truncated(process.name, toWidth: processNameWidth, font: nameFont)
+        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+
+        let pid = "\(process.pid)"
+        let pidWidth = pid.size(withAttributes: [.font: valueFont]).width
+        // Écart entre la fin du nom et le début du PID.
+        let pidGap: CGFloat = 5
+        let name = truncated(process.name,
+                             toWidth: max(0, processNameWidth - pidWidth - pidGap),
+                             font: nameFont)
         draw(name, at: NSPoint(x: padding, y: y), font: nameFont, color: primary)
 
-        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+        let nameWidth = name.size(withAttributes: [.font: nameFont]).width
+        draw(pid, at: NSPoint(x: padding + nameWidth + pidGap, y: y),
+             font: valueFont, color: secondary)
+
         let cpu = String(format: "%.1f %%", process.cpu)
         drawRight(cpu, at: NSPoint(x: padding, y: y),
                   rightEdge: padding + lineWidth + valueGap, font: valueFont, color: secondary)
