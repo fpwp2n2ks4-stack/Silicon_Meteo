@@ -645,6 +645,14 @@ public final class TemperatureReader: @unchecked Sendable {
 /// tick précédent. Au premier appel, faute de référence, tous les débits
 /// valent 0 — comme `NetworkReader`.
 ///
+/// Attention à l'unité : `pti_total_user` et `pti_total_system` sont en
+/// **ticks mach** (`mach_absolute_time`), pas en nanosecondes. Un tick ne
+/// vaut 1 ns que sur les Mac Intel (timebase `1/1`) ; sur Apple Silicon la
+/// base vaut 24 MHz, soit `125/3 ≈ 41,67 ns` par tick. Diviser directement
+/// par `1e9` sous-estimerait donc la charge d'un facteur ~41,7 sur Apple
+/// Silicon. On convertit via `mach_timebase_info`, ce qui donne le même
+/// résultat sur les deux architectures.
+///
 /// Limite assumée : les processus appartenant à un autre utilisateur, ou
 /// protégés par le noyau (SIP, `kernel_task`), refusent `proc_pidinfo` et
 /// sont simplement ignorés. Les déduire exigerait des privilèges qu'un
@@ -656,6 +664,19 @@ public final class ProcessReader: @unchecked Sendable {
     }
     private var previous: [Int32: Sample] = [:]
     private var lastDate: Date?
+
+    /// Nombre de nanosecondes par tick mach, une fois pour tout le processus.
+    ///
+    /// `mach_timebase_info` renvoie une fraction `numer/denom` : sur Apple
+    /// Silicon `125/3` (≈ 41,67 ns/tick), sur Intel `1/1` (1 ns/tick). Le
+    /// résultat est calculé au premier accès, de façon paresseuse et
+    /// thread-safe, puis réutilisé.
+    private static let nanosecondsPerTick: Double = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        guard info.denom != 0 else { return 1 }
+        return Double(info.numer) / Double(info.denom)
+    }()
 
     public init() {}
 
@@ -706,7 +727,10 @@ public final class ProcessReader: @unchecked Sendable {
             // cas la différence serait absurde, on repart de zéro.
             var cpu: Double = 0
             if elapsed > 0, let old = previous[pid], sample.cpuTime >= old.cpuTime {
-                cpu = Double(sample.cpuTime - old.cpuTime) / (elapsed * secondsNanoseconds) * 100
+                // `cpuTime` est en ticks mach : on le ramène en nanosecondes
+                // avant de le rapporter au temps réel écoulé.
+                let nanoseconds = Double(sample.cpuTime - old.cpuTime) * Self.nanosecondsPerTick
+                cpu = nanoseconds / (elapsed * secondsNanoseconds) * 100
             }
 
             usages.append(ProcessUsage(name: Self.name(for: pid) ?? "pid \(pid)",

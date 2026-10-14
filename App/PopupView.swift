@@ -237,7 +237,7 @@ final class PopupView: NSView {
 
         var y = padding
 
-        // ---- En-tête : modèle et date ----
+        // ---- En-tête : modèle, puce, heure et date ----
         let model = HostInfo.modelString
         let modelFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
         draw(model, at: NSPoint(x: padding, y: y), font: modelFont, color: primary)
@@ -246,24 +246,36 @@ final class PopupView: NSView {
         // `MAC - 17.3` à gauche, `Apple M5 - 10 cœurs` à droite. Elle était
         // aussi écrite au-dessus de la ligne GPU, ce qui n'était qu'un doublon.
         //
-        // Elle est plus petite et en `secondary` : `MAC - 17.3` reste
-        // l'information principale, la puce en est la précision — l'inverse
-        // donnerait deux éléments de même poids sur une même ligne.
-        //
-        // Le décalage vertical vient des descendantes des deux polices : le
-        // point de `draw` est le bas du cadre du texte, pas la ligne de base.
-        // Sans cette correction, la puce flotterait ~0,4 pt trop haut.
-        let chipFont = NSFont.systemFont(ofSize: 10)
+        // Elle est **visuellement identique** à `MAC - 17.3` : même police
+        // (taille et graisse) et même couleur `primary`. Plus de correction de
+        // descendante, les deux points de `draw` sont au même niveau.
+        let chipFont = modelFont
         drawRight(L("%1$@ - %2$d cores", HostInfo.chipString, coreCount),
-                  at: NSPoint(x: padding, y: y + modelFont.descender - chipFont.descender),
+                  at: NSPoint(x: padding, y: y),
                   rightEdge: bounds.width - padding,
-                  font: chipFont, color: secondary)
+                  font: chipFont, color: primary)
         y += rowHeight - 4
 
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        draw(formatter.string(from: snapshot.date),
-             at: NSPoint(x: padding, y: y), font: .systemFont(ofSize: 10), color: secondary)
+        // Seconde ligne : l'heure à gauche, la date à droite — cette dernière
+        // se cale sous la puce, dans la même colonne.
+        //
+        // La date est au **format long** (`DateFormatter.Style.long`), dans la
+        // langue active : « 14 octobre 2026 » en français, « October 14, 2026 »
+        // en anglais. `dateFormat` en dur aurait figé l'ordre jour/mois, propre
+        // au français.
+        let headerDetailFont = NSFont.systemFont(ofSize: 10)
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm:ss"
+        draw(timeFormatter.string(from: snapshot.date),
+             at: NSPoint(x: padding, y: y), font: headerDetailFont, color: secondary)
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: Localization.current)
+        dateFormatter.dateStyle = .long
+        dateFormatter.timeStyle = .none
+        drawRight(dateFormatter.string(from: snapshot.date),
+                  at: NSPoint(x: padding, y: y), rightEdge: bounds.width - padding,
+                  font: headerDetailFont, color: secondary)
         y += rowHeight + 4
 
         drawSeparator(y: y)
