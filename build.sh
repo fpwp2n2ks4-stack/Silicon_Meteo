@@ -56,6 +56,16 @@ for lproj in Resources/*.lproj; do
     cp -R "$lproj" "$APP_BUNDLE/Contents/Resources/"
 done
 
+# Icône de l'application : le `.icns` est versionné, produit par
+# `Resources/make-icon.swift` à partir de `toaster.svg`. Le copier ici garde le
+# build sans dépendance : seul `iconutil`/AppKit sert à le (re)générer, jamais à
+# le consommer.
+echo "▸ Icône"
+for icns in Resources/*.icns; do
+    [ -f "$icns" ] || continue
+    cp "$icns" "$APP_BUNDLE/Contents/Resources/"
+done
+
 echo "▸ Compilation (arm64 natif)"
 swiftc \
     -O \
@@ -101,6 +111,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
     <string>1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <!-- Toasty.icns, copié depuis Resources/ : icône de l'app dans le Finder. -->
+    <key>CFBundleIconFile</key>
+    <string>$APP_NAME</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <!-- Agent de barre de menus : pas d'icône dans le Dock, pas de menu App -->
