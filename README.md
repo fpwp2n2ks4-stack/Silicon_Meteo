@@ -24,11 +24,13 @@ Pas de chiffres qui dansent dans tous les sens, pas d'interface envahissante : j
 - **Réseau** — Débits descendant/montant lissés sur 6 secondes, avec détection automatique de l'interface active. Échelle logarithmique (vert < ~1,48 Mo/s, jaune < ~3,88 Mo/s, rouge au-delà). On mesure ce qui circule vraiment, sans deviner la bande passante théorique (qu'il est impossible de lire proprement sur macOS).
 - **Température** — Pic du die SoC. Sur Apple Silicon, CPU et GPU partagent le même die : tous les capteurs thermiques évoluent ensemble. On affiche donc honnêtement le pic du die, plutôt que d'inventer une séparation qui n'existe pas.
 - **Batterie** — **Temps restant** affiché directement dans la barre de menus (ex. `1h23`, `⚡ 27 min`). Devient **rouge** lorsque le niveau descend sous 20 %. Simple, lisible et efficace.
+- **Processus les plus gourmands** — Les 10 processus qui consomment le plus de CPU, avec leur PID, leur charge CPU et leur mémoire. Un bouton × apparaît au survol pour terminer un processus — uniquement ceux que macOS autorise, jamais pour se couper l'herbe sous le pied.
 
-L'en-tête du panneau détaillé affiche le modèle de Mac à gauche, et la puce + nombre de cœurs à droite, sur la même ligne :
+L'en-tête du panneau détaillé affiche le modèle de Mac à gauche, et la puce + nombre de cœurs à droite, sur la même ligne — **même police et même couleur**. La ligne suivante donne l'heure à gauche et la **date au format long** à droite, sous la puce :
 
 ```
-MAC - 17.3                                   Apple M5 - 10 cœurs
+MAC - X.Y                                  Apple M1 - 6 cœurs
+09:41:07                                       14 octobre 2026
 ```
 
 ### Prérequis
@@ -101,6 +103,7 @@ Distribué sous licence [MIT](LICENSE).
 
 - **Ownership IOKit soigné.** Utilisation systématique de `Unmanaged<T>` là où IOKit renvoie un `+1` retain. Pas de double-free à l'horizon.
 - **Appel direct de `host_processor_info`.** Ce symbole n'est pas exposé dans le SDK, il est invoqué via `@_silgen_name` — un petit coup de pouce bien poli au linker.
+- **Charge CPU par processus fidèle au *timebase*.** `proc_pidinfo` renvoie les temps CPU en *ticks* mach, pas en nanosecondes. On les convertit via `mach_timebase_info` ; sans cela, la charge affichée dans la liste des processus est sous-estimée d'un facteur ~41,7 sur Apple Silicon (le rapport vaut 1 sur Intel, la correction y est donc neutre).
 - **Températures honnêtes.** Sur les macOS récents, `IOReport` a disparu de l'espace utilisateur. Tous les capteurs du die évoluent ensemble : on affiche donc le pic du die plutôt que d'inventer une séparation CPU/GPU qui n'existe pas.
 - **Signal batterie fiable.** L'état « charge limitée » (Optimisation de la charge, ~80 %) est détecté via le **bit 24** de `ChargerData.NotChargingReason` (IOKit), et non déduit du pourcentage. Il suit la décision réelle de macOS.
 - **Réseau en échelle logarithmique.** Un pic de téléchargement n'est pas un niveau de charge linéaire. Et la vitesse négociée du lien n'est tout simplement pas lisible de façon fiable sur macOS.
@@ -124,11 +127,13 @@ Sin números saltando de un lado a otro, sin una interfaz invasiva: solo unas cu
 - **Red** — Caudales de descarga/subida suavizados en 6 segundos, con detección automática de la interfaz activa. Escala logarítmica (verde < ~1,48 MB/s, amarillo < ~3,88 MB/s, rojo por encima). Medimos lo que realmente circula, sin adivinar el ancho de banda del enlace (que no se puede leer de forma fiable en macOS).
 - **Temperatura** — Pico del die del SoC. En Apple Silicon, CPU y GPU comparten el mismo die: todos los sensores térmicos evolucionan a la vez. Por eso mostramos honestamente el pico del die, en lugar de inventar una separación CPU/GPU que no existe.
 - **Batería** — **Tiempo restante** mostrado directamente en la barra de menús (p. ej. `1h23`, `⚡ 27 min`). Se pone en **rojo** cuando el nivel baja del 20 %. Sencillo, legible y sin complicaciones.
+- **Procesos más exigentes** — Los 10 procesos que más CPU consumen, con su PID, su carga de CPU y su memoria. Al pasar el ratón aparece un botón × para terminar un proceso — solo los que macOS permite, para no cortarse la rama bajo los pies.
 
-La cabecera del panel detallado muestra el modelo del Mac a la izquierda y el chip + número de núcleos a la derecha, en la misma línea:
+La cabecera del panel detallado muestra el modelo del Mac a la izquierda y el chip + número de núcleos a la derecha, en la misma línea — **misma tipografía y mismo color**. La línea siguiente muestra la hora a la izquierda y la **fecha en formato largo** a la derecha, debajo del chip:
 
 ```
-MAC - 17.3                                   Apple M5 - 10 cœurs
+MAC - X.Y                                  Apple M1 - 6 núcleos
+09:41:07                                    14 de octubre de 2026
 ```
 
 ### Requisitos
@@ -201,6 +206,7 @@ Distribuido bajo la [Licencia MIT](LICENSE).
 
 - **Propiedad de IOKit cuidada.** Uso sistemático de `Unmanaged<T>` donde IOKit devuelve un `+1` retain. Ni una doble liberación a la vista.
 - **Llamada directa a `host_processor_info`.** Este símbolo no está declarado en el SDK, así que se invoca vía `@_silgen_name` — un pequeño favor muy educado al linker.
+- **Carga de CPU por proceso fiel al *timebase*.** `proc_pidinfo` devuelve los tiempos de CPU en *ticks* mach, no en nanosegundos. Se convierten mediante `mach_timebase_info`; sin ello, la carga mostrada en la lista de procesos se subestima por un factor de ~41,7 en Apple Silicon (en Intel la relación es 1, así que la corrección es neutra).
 - **Temperaturas honestas.** En las versiones recientes de macOS, `IOReport` ha desaparecido del espacio de usuario. Todos los sensores del die evolucionan a la vez, así que mostramos el pico del die en vez de fabricar una separación CPU/GPU que no existe.
 - **Señal de batería fiable.** El estado de «carga limitada» (Optimización de carga, ~80 %) se detecta mediante el **bit 24** de `ChargerData.NotChargingReason` (IOKit), y no se deduce del porcentaje. Sigue la decisión real de macOS.
 - **Red en escala logarítmica.** Un pico de descarga no es un «nivel de carga» lineal. Y la velocidad negociada del enlace sencillamente no se puede leer de forma fiable en macOS.
@@ -223,11 +229,13 @@ No numbers frantically jumping around, no cluttered interface — just a few bar
 - **Network** — Download/upload throughput smoothed over 6 seconds, with automatic active interface detection. Logarithmic scale (green < ~1.48 MB/s, yellow < ~3.88 MB/s, red above). We measure what actually flows, without guessing link bandwidth (which isn't reliably readable on macOS).
 - **Temperature** — SoC die peak. On Apple Silicon, CPU and GPU share the same die — all thermal sensors move together. So we honestly show the die peak instead of inventing a CPU/GPU split that doesn't exist.
 - **Battery** — **Remaining time** shown directly in the menu bar (e.g. `1h23`, `⚡ 27 min`). Turns **red** when below 20%. Simple, readable, no fuss.
+- **Top processes** — The 10 processes hogging the most CPU, with their PID, CPU load and memory. A × button appears on hover to terminate a process — only the ones macOS allows, so you never saw off the branch you're sitting on.
 
-The detailed panel header shows the Mac model on the left and chip + core count on the right, on the same line:
+The detailed panel header shows the Mac model on the left and chip + core count on the right, on the same line — **same font and colour**. The next line shows the time on the left and the **long-format date** on the right, beneath the chip:
 
 ```
-MAC - 17.3                                   Apple M5 - 10 cœurs
+MAC - X.Y                                  Apple M1 - 6 cores
+09:41:07                                          October 14, 2026
 ```
 
 ### Requirements
@@ -300,6 +308,7 @@ Released under the [MIT License](LICENSE).
 
 - **Proper IOKit ownership.** Uses `Unmanaged<T>` wherever IOKit returns a `+1` retain. No double-frees in sight.
 - **Calls `host_processor_info` by hand.** Undeclared in the SDK, reached via `@_silgen_name` — politely cheating the linker.
+- **Per-process CPU load faithful to the timebase.** `proc_pidinfo` returns CPU times in mach *ticks*, not nanoseconds. We convert them via `mach_timebase_info`; without it, the load shown in the process list is under-reported by ~41.7× on Apple Silicon (the ratio is 1 on Intel, so the correction is a no-op there).
 - **Honest temperatures.** On recent macOS, `IOReport` was removed from userspace. All die sensors move together, so we show the die peak instead of fabricating a CPU/GPU split that doesn't exist.
 - **Reliable battery signal.** The "charge limited" state (Optimized Battery Charging, ~80%) comes from bit 24 of `ChargerData.NotChargingReason` (IOKit), not inferred from percentage. It follows what macOS actually decided.
 - **Logarithmic network scale.** A download spike isn't a linear "load level". Also, negotiated link speed isn't reliably readable on macOS.
