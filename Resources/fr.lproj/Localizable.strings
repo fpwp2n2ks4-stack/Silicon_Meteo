@@ -9,6 +9,9 @@
 "compressed %1$@ · wired %2$@" = "compressé %1$@ · câblée %2$@";
 "Network ↓" = "Réseau ↓";
 "Network ↑" = "Réseau ↑";
+"Disk ↓" = "Disque ↓";
+"Disk ↑" = "Disque ↑";
+"Disk" = "Disque";
 "interface %@" = "interface %@";
 "SoC temperature" = "Température SoC";
 "avg %1$@ °C · %2$d measurement points" = "moyenne %1$@ °C · %2$d points de mesure";
@@ -33,3 +36,11 @@
 "%1$d h %2$d" = "%1$d h %2$d";
 "%.0f s" = "%.0f s";
 "%d %%" = "%d %%";
+"Battery health" = "État de santé batterie";
+"%1$d cycles" = "%1$d cycles";
+"Normal" = "Normal";
+"Good" = "Bon";
+"Fair" = "Acceptable";
+"Poor" = "Médiocre";
+"Check Battery" = "Vérification batterie recommandée";
+"Permanent Battery Failure" = "Défaillance permanente";

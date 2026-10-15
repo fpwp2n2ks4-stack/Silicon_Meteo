@@ -23,6 +23,8 @@ final class StatusItemView: NSView {
         case gpu
         case memory
         case network
+        case disk
+        case diskSpace
         case temperature
         case battery
     }
@@ -36,7 +38,7 @@ final class StatusItemView: NSView {
     private let spacing: CGFloat = 3
     private let iconSize: CGFloat = 16
 
-    private var metrics: [Metric] = [.cpu, .gpu, .memory, .network, .temperature, .battery]
+    private var metrics: [Metric] = [.cpu, .gpu, .memory, .network, .disk, .diskSpace, .temperature, .battery]
 
     override var isFlipped: Bool { false }
     override var isOpaque: Bool { false }
@@ -173,6 +175,12 @@ final class StatusItemView: NSView {
             let bytesPerSecond = max(snapshot.network.downloadPerSecond,
                                      snapshot.network.uploadPerSecond)
             return NetworkUsage.loadFraction(bytesPerSecond: bytesPerSecond)
+        case .disk:
+            let bytesPerSecond = max(snapshot.disk.readPerSecond,
+                                     snapshot.disk.writePerSecond)
+            return DiskUsage.loadFraction(bytesPerSecond: bytesPerSecond)
+        case .diskSpace:
+            return snapshot.diskSpace.fraction
         case .temperature:
             // 30 °C à 100 °C : la plage utile sur ce genre de machine.
             guard let peak = snapshot.temperature.socPeak else { return 0 }

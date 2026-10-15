@@ -9,6 +9,9 @@
 "compressed %1$@ · wired %2$@" = "voahenjana %1$@ · miraikitra %2$@";
 "Network ↓" = "Tambajotra ↓";
 "Network ↑" = "Tambajotra ↑";
+"Disk ↓" = "Kapila ↓";
+"Disk ↑" = "Kapila ↑";
+"Disk" = "Kapila";
 "interface %@" = "interface %@";
 "SoC temperature" = "Maripana SoC";
 "avg %1$@ °C · %2$d measurement points" = "salasala %1$@ °C · %2$d teboka fandrefesana";
@@ -33,3 +36,11 @@
 "%1$d h %2$d" = "%1$d h %2$d";
 "%.0f s" = "%.0f s";
 "%d %%" = "%d %%";
+"Battery health" = "Toe-batany bateria";
+"%1$d cycles" = "%1$d cycles";
+"Normal" = "Normal";
+"Good" = "Tsara";
+"Fair" = "Ekena";
+"Poor" = "Ratsy";
+"Check Battery" = "Tokony hijery bateria";
+"Permanent Battery Failure" = "Faille maharitra";

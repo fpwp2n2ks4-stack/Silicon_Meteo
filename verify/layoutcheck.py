@@ -104,5 +104,8 @@ def analyse(path, label, scale=2):
 
 r1 = analyse('verify/panel.png', 'Panneau')
 print()
-r2 = analyse('verify/menubar.png', 'Barre de menus')
-sys.exit(0 if (r1 and r2) else 1)
+# Ancien script attendait menubar.png ; on vérifie les deux rendus barre de menus
+r2_clair = analyse('verify/menubar-clair.png', 'Barre de menus (clair)')
+print()
+r2_sombre = analyse('verify/menubar-sombre.png', 'Barre de menus (sombre)')
+sys.exit(0 if (r1 and r2_clair and r2_sombre) else 1)

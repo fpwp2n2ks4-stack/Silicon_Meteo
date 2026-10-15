@@ -9,6 +9,7 @@
 import Foundation
 import IOKit
 import IOKit.ps
+import IOKit.storage
 import Darwin
 
 // MARK: - Déclarations IOKit non exposées au module Swift
@@ -119,6 +120,23 @@ public struct NetworkUsage {
     }
 }
 
+public struct DiskUsage {
+    public var readPerSecond: Double = 0    // octets/s
+    public var writePerSecond: Double = 0   // octets/s
+
+    public static func loadFraction(bytesPerSecond: Double) -> Double {
+        guard bytesPerSecond > 0 else { return 0 }
+        let normalized = log10(1 + bytesPerSecond / 5_000_000) / 2.5
+        return min(1, max(0, normalized))
+    }
+}
+
+public struct DiskSpace {
+    public var used: Double = 0
+    public var total: Double = 0
+    public var fraction: Double { total > 0 ? used / total : 0 }
+}
+
 public struct BatteryStatus {
     // swiftlint:disable implicit_optional_initialization
     // `= nil` est explicite ici parce que ces propriétés sont publiques :
@@ -170,6 +188,13 @@ public struct BatteryStatus {
     private static let chargeLimitBit = 0x0100_0000
 }
 
+public struct BatteryHealth {
+    public var isPresent: Bool = false
+    public var condition: String? = nil
+    public var maximumCapacity: Int? = nil
+    public var cycleCount: Int? = nil
+}
+
 public struct GPUUsage {
     public var deviceUtilization: Int = 0     // 0...100
     public var inUseMemory: Double = 0         // octets
@@ -206,6 +231,9 @@ public struct Snapshot {
     public var battery: BatteryStatus = BatteryStatus()
     public var gpu: GPUUsage = GPUUsage()
     public var temperature: Temperature = Temperature()
+    public var batteryHealth: BatteryHealth = BatteryHealth()
+    public var disk: DiskUsage = DiskUsage()
+    public var diskSpace: DiskSpace = DiskSpace()
     public var processes: [ProcessUsage] = []
     public var date: Date = Date()
 }
@@ -470,10 +498,144 @@ public struct BatteryReader: Sendable {
         defer { IOObjectRelease(service) }
 
         guard let data = IORegistryEntryCreateCFProperty(service, "ChargerData" as CFString,
-                                                         kCFAllocatorDefault, 0)?
-                        .takeRetainedValue() as? [String: Any]
+                                                          kCFAllocatorDefault, 0)?
+                         .takeRetainedValue() as? [String: Any]
         else { return 0 }
         return data["NotChargingReason"] as? Int ?? 0
+    }
+}
+
+public struct BatteryHealthReader: Sendable {
+    public init() {}
+
+    public func read() -> BatteryHealth {
+        var health = BatteryHealth()
+
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef],
+              let first = list.first,
+              let description = IOPSGetPowerSourceDescription(info, first)?.takeUnretainedValue() as? [String: Any]
+        else {
+            return health
+        }
+
+        health.isPresent = true
+        if let condition = description[kIOPSBatteryHealthConditionKey as String] as? String {
+            health.condition = condition
+        } else if let healthKey = description[kIOPSBatteryHealthKey as String] as? String {
+            health.condition = healthKey
+        }
+        if let maxCap = description[kIOPSMaxCapacityKey as String] as? Int {
+            health.maximumCapacity = maxCap
+        }
+
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault,
+                                           IOServiceMatching("AppleSmartBattery"),
+                                           &iterator) == kIOReturnSuccess else {
+            return health
+        }
+        let service = IOIteratorNext(iterator)
+        IOObjectRelease(iterator)
+        guard service != 0 else { return health }
+        defer { IOObjectRelease(service) }
+
+        if let data = IORegistryEntryCreateCFProperty(service, "BatteryData" as CFString,
+                                                      kCFAllocatorDefault, 0)?
+                        .takeRetainedValue() as? [String: Any],
+           let cycles = data["CycleCount"] as? Int {
+            health.cycleCount = cycles
+        } else if let cycle = description["CycleCount"] as? Int {
+            health.cycleCount = cycle
+        }
+
+        return health
+    }
+}
+
+public final class DiskSpaceReader: @unchecked Sendable {
+    public init() {}
+
+    public func read() -> DiskSpace {
+        var stats = statfs()
+        guard statfs("/", &stats) == 0 else { return DiskSpace() }
+        let total = Double(stats.f_blocks) * Double(stats.f_bsize)
+        let free = Double(stats.f_bavail) * Double(stats.f_bsize)
+        let used = max(0, total - free)
+        return DiskSpace(used: used, total: total)
+    }
+}
+
+public final class DiskReader: @unchecked Sendable {
+    private struct Counters {
+        var read: UInt64 = 0
+        var write: UInt64 = 0
+    }
+    private var previous: Counters = Counters()
+    private var lastTimestamp: Date?
+
+    public init() {}
+
+    public func read() -> DiskUsage {
+        let now = Date()
+        guard let stats = self.diskStatistics() else {
+            lastTimestamp = now
+            previous = Counters()
+            return DiskUsage()
+        }
+        let current = Counters(read: stats.read, write: stats.write)
+
+        guard let last = lastTimestamp else {
+            previous = current
+            lastTimestamp = now
+            return DiskUsage()
+        }
+        let elapsed = now.timeIntervalSince(last)
+        guard elapsed > 0 else { return DiskUsage() }
+
+        let deltaRead = Double(current.read &- previous.read)
+        let deltaWrite = Double(current.write &- previous.write)
+
+        previous = current
+        lastTimestamp = now
+
+        return DiskUsage(
+            readPerSecond: deltaRead / elapsed,
+            writePerSecond: deltaWrite / elapsed
+        )
+    }
+
+    private struct DiskStats {
+        var read: UInt64 = 0
+        var write: UInt64 = 0
+    }
+
+    private func diskStatistics() -> DiskStats? {
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault,
+                                           IOServiceMatching("IOBlockStorageDriver"),
+                                           &iterator) == kIOReturnSuccess else {
+            return nil
+        }
+        defer { IOObjectRelease(iterator) }
+
+        var stats: DiskStats?
+        while case let service = IOIteratorNext(iterator), service != 0 {
+            defer { IOObjectRelease(service) }
+            guard let properties = IORegistryEntryCreateCFProperty(service,
+                                                                   kIOBlockStorageDriverStatisticsKey as CFString,
+                                                                   kCFAllocatorDefault,
+                                                                   0)?
+                                    .takeRetainedValue() as? [String: Any] else {
+                continue
+            }
+            if let read = properties[kIOBlockStorageDriverStatisticsBytesReadKey as String] as? UInt64,
+               let write = properties[kIOBlockStorageDriverStatisticsBytesWrittenKey as String] as? UInt64 {
+                stats = DiskStats(read: read, write: write)
+                break
+            }
+        }
+        return stats
     }
 }
 
@@ -790,8 +952,14 @@ public final class MetricsCollector: @unchecked Sendable {
     private let gpu = GPUReader()
     private let temperature = TemperatureReader()
     private let process = ProcessReader()
+    private let batteryHealthReader = BatteryHealthReader()
+    private let disk = DiskReader()
+    private let diskSpaceReader = DiskSpaceReader()
+    private let cachedBatteryHealth: BatteryHealth
 
-    public init() {}
+    public init() {
+        cachedBatteryHealth = batteryHealthReader.read()
+    }
 
     public var coreCount: Int { cpu.coreCount }
 
@@ -803,6 +971,9 @@ public final class MetricsCollector: @unchecked Sendable {
             battery: battery.read(),
             gpu: gpu.read(),
             temperature: temperature.read(),
+            batteryHealth: cachedBatteryHealth,
+            disk: disk.read(),
+            diskSpace: diskSpaceReader.read(),
             processes: process.read(),
             date: Date()
         )

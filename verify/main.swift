@@ -29,6 +29,14 @@ let snapshot = { () -> Snapshot in
     s.temperature.socPeak = 68.4
     s.temperature.socAverage = 61.2
     s.temperature.dieCount = 24
+    s.disk.readPerSecond = 12.5e6
+    s.disk.writePerSecond = 5.2e6
+    s.diskSpace.used = 120.5e9
+    s.diskSpace.total = 245.1e9
+    s.batteryHealth.isPresent = true
+    s.batteryHealth.condition = "Normal"
+    s.batteryHealth.maximumCapacity = 100
+    s.batteryHealth.cycleCount = 41
     s.processes = [
         ProcessUsage(name: "Google Chrome", pid: 4021, cpu: 142.7, memory: 4.2e9),
         ProcessUsage(name: "Google Chrome Helper (Renderer)", pid: 4118, cpu: 63.1, memory: 1.8e9),

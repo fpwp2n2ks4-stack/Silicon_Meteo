@@ -132,8 +132,15 @@ final class PopupView: NSView {
         height += rowHeight * 2           // réseau ↓ ↑
         if snapshot.network.activeInterface != nil { height += rowHeight - 4 }
         height += 8
+        height += rowHeight * 2           // disque ↓ ↑
+        height += rowHeight               // utilisation disque
+        height += 8
         if snapshot.temperature.dieCount > 0 { height += rowHeight * 2 - 3 }
         if snapshot.battery.isPresent { height += 8 + rowHeight }
+        if snapshot.batteryHealth.isPresent {
+            height += 6
+            height += 13                    // ligne état de santé
+        }
         height += 8
         height += 12                     // pied de page
         return height
@@ -408,6 +415,30 @@ final class PopupView: NSView {
         drawSeparator(y: y)
         y += 8
 
+        // ---- Disque ----
+        let diskPeak = max(snapshot.disk.readPerSecond, snapshot.disk.writePerSecond)
+        drawRow(label: L("Disk ↓"),
+                value: Formatters.rate(snapshot.disk.readPerSecond),
+                at: y, primary: primary, secondary: secondary,
+                fraction: DiskUsage.loadFraction(bytesPerSecond: diskPeak))
+        y += rowHeight
+        drawRow(label: L("Disk ↑"),
+                value: Formatters.rate(snapshot.disk.writePerSecond),
+                at: y, primary: primary, secondary: secondary,
+                fraction: DiskUsage.loadFraction(bytesPerSecond: diskPeak))
+        y += rowHeight
+        drawRow(label: L("Disk"),
+                value: "\(Int(snapshot.diskSpace.fraction * 100)) %",
+                at: y, primary: primary, secondary: secondary,
+                fraction: snapshot.diskSpace.fraction)
+        y += rowHeight
+        draw("\(Formatters.bytes(snapshot.diskSpace.used)) / \(Formatters.bytes(snapshot.diskSpace.total))",
+             at: NSPoint(x: padding + 92, y: y), font: .systemFont(ofSize: 10), color: secondary)
+        y += rowHeight
+
+        drawSeparator(y: y)
+        y += 8
+
         // ---- Température ----
         if snapshot.temperature.dieCount > 0 {
             drawRow(label: L("SoC temperature"),
@@ -448,6 +479,30 @@ final class PopupView: NSView {
                                              atChargeLimit: snapshot.battery.isAtChargeLimit,
                                              isLowPowerMode: snapshot.battery.isLowPowerMode))
             y += rowHeight
+        }
+
+        // ---- État de santé batterie ----
+        if snapshot.batteryHealth.isPresent {
+            drawSeparator(y: y)
+            y += 6
+            var valueParts: [String] = []
+            if let condition = snapshot.batteryHealth.condition,
+               !condition.isEmpty {
+                valueParts.append(L(condition))
+            }
+            if let maxCap = snapshot.batteryHealth.maximumCapacity {
+                valueParts.append(L("%1$d %%", maxCap))
+            }
+            if let cycles = snapshot.batteryHealth.cycleCount {
+                valueParts.append(L("%1$d cycles", cycles))
+            }
+            if !valueParts.isEmpty {
+                let text = L("Battery health") + " : " + valueParts.joined(separator: " · ")
+                draw(text, at: NSPoint(x: padding, y: y), font: .systemFont(ofSize: 9), color: secondary)
+                y += 13
+            } else {
+                y += 7
+            }
         }
 
         // ---- Pied de page ----
