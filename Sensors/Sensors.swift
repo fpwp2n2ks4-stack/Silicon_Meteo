@@ -657,6 +657,19 @@ public final class ProcessReader: @unchecked Sendable {
     private var previous: [Int32: Sample] = [:]
     private var lastDate: Date?
 
+    /// Facteur de conversion ticks Mach → nanosecondes.
+    ///
+    /// `proc_taskinfo.pti_total_user` / `pti_total_system` ne sont **pas** en
+    /// nanosecondes mais en unités d'horloge Mach absolues. Sur Apple Silicon
+    /// la base vaut 125/3 (≈ 41,67 ns, soit 24 MHz), contre 1/1 sur Intel : les
+    /// confondre sous-estime la charge d'un facteur ~42.
+    private let nanosecondsPerTick: Double = {
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        guard timebase.denom != 0 else { return 1 }
+        return Double(timebase.numer) / Double(timebase.denom)
+    }()
+
     public init() {}
 
     /// Liste des PID, dimensionnée par un premier appel qui ne remplit rien.
@@ -690,7 +703,6 @@ public final class ProcessReader: @unchecked Sendable {
 
         var current: [Int32: Sample] = [:]
         var usages: [ProcessUsage] = []
-        let secondsNanoseconds = 1_000_000_000.0
 
         for pid in Self.allPIDs() where pid > 0 {
             var info = proc_taskinfo()
@@ -706,7 +718,8 @@ public final class ProcessReader: @unchecked Sendable {
             // cas la différence serait absurde, on repart de zéro.
             var cpu: Double = 0
             if elapsed > 0, let old = previous[pid], sample.cpuTime >= old.cpuTime {
-                cpu = Double(sample.cpuTime - old.cpuTime) / (elapsed * secondsNanoseconds) * 100
+                let cpuNanoseconds = Double(sample.cpuTime - old.cpuTime) * nanosecondsPerTick
+                cpu = cpuNanoseconds / (elapsed * 1_000_000_000) * 100
             }
 
             usages.append(ProcessUsage(name: Self.name(for: pid) ?? "pid \(pid)",
