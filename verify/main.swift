@@ -24,30 +24,36 @@ let snapshot = { () -> Snapshot in
     s.network.activeInterface = "en0"
     s.battery.level = 34
     s.battery.isCharging = true
+    s.battery.isPlugged = true
     s.battery.isPresent = true
     s.battery.timeRemainingMinutes = 27
+    s.battery.health = 99
+    s.battery.cycles = 77
+    s.battery.maxCapacityMah = 4563
+    s.battery.designCapacityMah = 4629
+    s.battery.voltage = 12.2
+    s.battery.amperage = -376
+    s.battery.adapterWatts = 96
+    s.battery.adapterVoltage = 20.15
     s.temperature.socPeak = 68.4
     s.temperature.socAverage = 61.2
     s.temperature.dieCount = 24
-    s.disk.readPerSecond = 12.5e6
-    s.disk.writePerSecond = 5.2e6
-    s.diskSpace.used = 120.5e9
-    s.diskSpace.total = 245.1e9
-    s.batteryHealth.isPresent = true
-    s.batteryHealth.condition = "Normal"
-    s.batteryHealth.maximumCapacity = 100
-    s.batteryHealth.cycleCount = 41
     s.processes = [
         ProcessUsage(name: "Google Chrome", pid: 4021, cpu: 142.7, memory: 4.2e9),
         ProcessUsage(name: "Google Chrome Helper (Renderer)", pid: 4118, cpu: 63.1, memory: 1.8e9),
         ProcessUsage(name: "WindowServer", pid: 218, cpu: 41.5, memory: 980e6),
         ProcessUsage(name: "kernel_task", pid: 0, cpu: 28.9, memory: 0),
-        ProcessUsage(name: "Xcode", pid: 1733, cpu: 22.4, memory: 3.1e9),
-        ProcessUsage(name: "com.apple.WebKit.GPU", pid: 5220, cpu: 14.0, memory: 410e6),
-        ProcessUsage(name: "WindowServerHelperNomTresLong", pid: 9087, cpu: 9.8, memory: 220e6),
-        ProcessUsage(name: "mds_stores", pid: 341, cpu: 6.3, memory: 180e6),
-        ProcessUsage(name: "Toasty", pid: 65535, cpu: 1.2, memory: 24e6),
-        ProcessUsage(name: "Terminal", pid: 1290, cpu: 0.4, memory: 88e6)
+        ProcessUsage(name: "WindowServerHelperNomTresLong", pid: 9087, cpu: 9.8, memory: 220e6)
+    ]
+    s.bluetooth = [
+        BluetoothDevice(name: "AirPods de Yves", components: [
+            BluetoothComponent(kind: "left", level: 100),
+            BluetoothComponent(kind: "right", level: 100),
+            BluetoothComponent(kind: "case", level: 43)
+        ]),
+        BluetoothDevice(name: "Magic Mouse", components: [
+            BluetoothComponent(kind: "battery", level: 85)
+        ])
     ]
     s.date = Date()
     return s
@@ -69,16 +75,11 @@ func render<V: NSView>(_ view: V, to path: String, scale: CGFloat = 2) {
         print("✗ \(path) : alloc rep"); return
     }
     rep.size = size
-    NSGraphicsContext.saveGraphicsState()
-    let ctx = NSGraphicsContext(bitmapImageRep: rep)!
-    NSGraphicsContext.current = ctx
-    ctx.cgContext.scaleBy(x: scale, y: scale)
-    // Hors application, l'apparence système n'est pas résolue : on force le
-    // mode clair, sinon tout sort noir et la mise en page est illisible.
-    NSAppearance.currentDrawing().performAsCurrentDrawingAppearance {
-        view.draw(view.bounds)
-    }
-    NSGraphicsContext.restoreGraphicsState()
+    // `cacheDisplay` laisse AppKit configurer le contexte selon `isFlipped` :
+    // le rendu manuel dans un contexte bitmap (ancienne version) inversait
+    // verticalement les vues retournées, donc toutes les captures sortaient
+    // à l'envers. L'apparence claire forcée plus haut reste prise en compte.
+    view.cacheDisplay(in: view.bounds, to: rep)
     if let data = rep.representation(using: .png, properties: [:]) {
         try? data.write(to: URL(fileURLWithPath: path))
         print("✓ \(path)  \(Int(size.width))×\(Int(size.height))")
@@ -98,53 +99,50 @@ render(popup, to: "verify/panel.png")
 let status = StatusItemView(snapshot: snapshot)
 status.frame = NSRect(origin: .zero, size: status.intrinsicContentSize)
 
-func renderOnMenuBar(_ view: NSView, dark: Bool, to path: String) {
-    let scale: CGFloat = 3
-    let size = view.bounds.size
-    // Bande de barre de menus avec la même hauteur que l'item réel.
-    let strip = NSSize(width: size.width + 40, height: 24)
-
-    guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
-                                     pixelsWide: Int(strip.width * scale),
-                                     pixelsHigh: Int(strip.height * scale),
-                                     bitsPerSample: 8, samplesPerPixel: 4,
-                                     hasAlpha: true, isPlanar: false,
-                                     colorSpaceName: .deviceRGB,
-                                     bytesPerRow: 0, bitsPerPixel: 0) else { return }
-    rep.size = strip
-    NSGraphicsContext.saveGraphicsState()
-    let ctx = NSGraphicsContext(bitmapImageRep: rep)!
-    NSGraphicsContext.current = ctx
-    ctx.cgContext.scaleBy(x: scale, y: scale)
-
-    // Fond de barre : gris clair / gris sombre, comme sur macOS.
-    (dark ? NSColor(white: 0.18, alpha: 1) : NSColor(white: 0.94, alpha: 1)).setFill()
-    NSBezierPath(rect: NSRect(origin: .zero, size: strip)).fill()
-    // Séparation basse, comme le trait sous la barre de menus.
-    (dark ? NSColor(white: 0.32, alpha: 1) : NSColor(white: 0.78, alpha: 1)).setFill()
-    NSBezierPath(rect: NSRect(x: 0, y: 0, width: strip.width, height: 0.5)).fill()
-
-    // La vue choisit noir ou blanc via `effectiveAppearance` : il faut
-    // encadrer le dessin avec l'apparence voulue, sinon les deux aperçus
-    // seraient identiques.
-    let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
-    appearance.performAsCurrentDrawingAppearance {
-        view.draw(view.bounds)
-    }
-    NSGraphicsContext.restoreGraphicsState()
-    if let data = rep.representation(using: .png, properties: [:]) {
-        try? data.write(to: URL(fileURLWithPath: path))
-        print("✓ \(path)  \(Int(strip.width))×\(Int(strip.height))")
+/// Bande de barre de menus : fond gris (clair/sombre) et trait de séparation
+/// en bas, comme sous la barre réelle. Sert de conteneur pour `cacheDisplay`,
+/// qui gère lui-même l'orientation selon `isFlipped`.
+final class MenuBarStrip: NSView {
+    var barColor: NSColor = .white
+    var hairlineColor: NSColor = .gray
+    override var isFlipped: Bool { false }
+    override func draw(_ dirtyRect: NSRect) {
+        barColor.setFill()
+        NSBezierPath(rect: bounds).fill()
+        hairlineColor.setFill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: bounds.width, height: 0.5)).fill()
     }
 }
 
-// La vue est centrée verticalement dans la bande.
-let savedFrame = status.frame
-status.frame = NSRect(x: 20,
-                      y: (24 - savedFrame.height) / 2,
-                      width: savedFrame.width,
-                      height: savedFrame.height)
+func renderOnMenuBar(_ view: NSView, dark: Bool, to path: String) {
+    let statusSize = view.bounds.size
+    // Bande de barre de menus avec la même hauteur que l'item réel.
+    let strip = NSSize(width: statusSize.width + 40, height: 24)
+
+    let container = MenuBarStrip(frame: NSRect(origin: .zero, size: strip))
+    // Fond de barre : gris clair / gris sombre, comme sur macOS.
+    container.barColor = dark ? NSColor(white: 0.18, alpha: 1) : NSColor(white: 0.94, alpha: 1)
+    // Séparation basse, comme le trait sous la barre de menus.
+    container.hairlineColor = dark ? NSColor(white: 0.32, alpha: 1) : NSColor(white: 0.78, alpha: 1)
+
+    // La vue choisit noir ou blanc via `effectiveAppearance` : on fixe donc
+    // l'apparence du conteneur, héritée par l'icône, sinon les deux aperçus
+    // seraient identiques.
+    let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
+    container.appearance = appearance
+
+    // La vue est centrée verticalement dans la bande.
+    view.frame = NSRect(x: 20,
+                        y: (strip.height - statusSize.height) / 2,
+                        width: statusSize.width,
+                        height: statusSize.height)
+    container.addSubview(view)
+    container.layoutSubtreeIfNeeded()
+
+    appearance.performAsCurrentDrawingAppearance {
+        render(container, to: path, scale: 3)
+    }
+}
 
 renderOnMenuBar(status, dark: false, to: "verify/menubar-clair.png")
 renderOnMenuBar(status, dark: true, to: "verify/menubar-sombre.png")
-status.frame = savedFrame

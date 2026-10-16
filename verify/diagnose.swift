@@ -9,15 +9,6 @@ import Darwin
 
 setvbuf(stdout, nil, _IONBF, 0)
 
-// `proc_taskinfo.pti_total_user` / `pti_total_system` sont en unités d'horloge
-// Mach absolues, pas en nanosecondes : sur Apple Silicon la base vaut 125/3
-// (≈ 41,67 ns), il faut donc convertir avant de diviser par 1e9.
-let nanosecondsPerTick: Double = {
-    var timebase = mach_timebase_info_data_t()
-    mach_timebase_info(&timebase)
-    return timebase.denom == 0 ? 1 : Double(timebase.numer) / Double(timebase.denom)
-}()
-
 // --- 1. Le processus tourne-t-il et reste-t-il stable ? ---
 let pid = pid_t(CommandLine.arguments.count > 1 ? (Int(CommandLine.arguments[1]) ?? 0) : 0)
 guard pid > 0 else { print("✗ PID manquant"); exit(1) }
@@ -32,7 +23,7 @@ print("✓ processus vivant (pid \(pid))")
 print(String(format: "  threads   : %d", info.pti_threadnum))
 print(String(format: "  RSS       : %.1f Mo", Double(info.pti_resident_size) / 1_048_576))
 print(String(format: "  CPU cumulé: %.2f s depuis le lancement",
-             Double(info.pti_total_user + info.pti_total_system) * nanosecondsPerTick / 1e9))
+             Double(info.pti_total_user + info.pti_total_system) / 1e9))
 
 
 // --- 2. Mesure de la charge réelle de l'agent ---
@@ -42,7 +33,7 @@ func cpuTime() -> Double? {
     var info = proc_taskinfo()
     let size = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, Int32(MemoryLayout<proc_taskinfo>.size))
     guard size > 0 else { return nil }
-    return Double(info.pti_total_user + info.pti_total_system) * nanosecondsPerTick / 1e9
+    return Double(info.pti_total_user + info.pti_total_system) / 1e9
 }
 
 if let t0 = cpuTime() {

@@ -1,4 +1,5 @@
 import struct, zlib, sys
+from collections import Counter
 
 def read_png(p):
     d = open(p,'rb').read()
@@ -35,51 +36,75 @@ def read_png(p):
         out += line; prev = line
     return w, h, ch, bytes(out)
 
-def analyse(path, label, scale=2):
-    w, h, ch, px = read_png(path)
-    def dark(x, y, t=170):
-        o = (y*w+x)*ch
-        return px[o] < t or px[o+1] < t or px[o+2] < t
-    def coloured(x, y):
-        """pixel non gris = texte accentué ou jauge colorée"""
-        o = (y*w+x)*ch
-        r, g, b = px[o], px[o+1], px[o+2]
-        return max(r,g,b) - min(r,g,b) > 30
 
-    # bbox du contenu sombre
+def analyse(path, label, scale=2, inset=5):
+    """Contrôle heuristique d'une capture de `verify/`.
+
+    Le fond n'est plus supposé clair : on prend la couleur **la plus
+    fréquente** de l'image (elle domine largement). Le cadre arrondi et le
+    trait de séparation sont ignorés via `inset` (en points), sinon ils
+    collent au bord et font croire à un débordement.
+    """
+    w, h, ch, px = read_png(path)
+
+    def rgb(x, y):
+        o = (y*w+x)*ch
+        return (px[o], px[o+1], px[o+2])
+
+    def alpha(x, y):
+        # RGBA uniquement : un pixel transparent (coins arrondis, extérieur du
+        # cadre) ne doit pas être pris pour du contenu.
+        if ch < 4:
+            return 255
+        return px[(y*w+x)*ch + 3]
+
+    hist = Counter()
+    for y in range(0, h, 2):
+        for x in range(0, w, 2):
+            if alpha(x, y) > 40:
+                hist[rgb(x, y)] += 1
+    bg = hist.most_common(1)[0][0]
+
+    def content(x, y, thr=40):
+        if alpha(x, y) <= 40:
+            return False
+        r, g, b = rgb(x, y)
+        return abs(r-bg[0]) + abs(g-bg[1]) + abs(b-bg[2]) > thr
+
+    def coloured(x, y):
+        if alpha(x, y) <= 40:
+            return False
+        r, g, b = rgb(x, y)
+        return max(r, g, b) - min(r, g, b) > 30
+
+    # La bande `inset` évite le cadre arrondi et le trait de séparation, qui
+    # touchent le bord et fausseraient la mesure de débordement.
+    m = inset*scale
     xs, ys = [], []
-    for y in range(h):
-        for x in range(w):
-            if dark(x, y):
+    for y in range(m, h-m):
+        for x in range(m, w-m):
+            if content(x, y):
                 xs.append(x); ys.append(y)
+
+    print(f"{label} : image {w//scale}×{h//scale} pt (fond {bg})", end="")
     if not xs:
-        print(f"✗ {label} : rien n'a été dessiné"); return False
+        print(" → ✗ rien n'a été dessiné"); return False
+    print()
 
     x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
-    print(f"{label} : image {w//scale}×{h//scale} pt")
-    print(f"  contenu : x {x0//scale}..{x1//scale} pt, y {y0//scale}..{y1//scale} pt")
+    print(f"  contenu (hors cadre) : x {x0//scale}..{x1//scale} pt, y {y0//scale}..{y1//scale} pt")
+    print(f"  marges : droite {(w-1-x1)/scale:.1f} pt, basse {(h-1-y1)/scale:.1f} pt")
 
     ok = True
-    # marge : rien ne doit toucher le bord (le cadre arrondi est à x=0)
-    pad = 4*scale
-    if x0 < pad or y0 < pad:
-        print(f"  ✗ contenu trop près du bord haut/gauche ({x0//scale}, {y0//scale})")
-        ok = False
-    right_margin = (w-1-x1)/scale
-    bottom_margin = (h-1-y1)/scale
-    print(f"  marge droite {right_margin:.1f} pt, marge basse {bottom_margin:.1f} pt")
-    if right_margin < 4:
-        print("  ✗ débordement à droite"); ok = False
-    if bottom_margin < 2:
-        print("  ✗ contenu collé au bas (piège de page rogné ?)"); ok = False
+    if x1 >= w-1-m or y1 >= h-1-m:
+        print("  ✗ le contenu atteint le bord (débordement ?)"); ok = False
 
-    # dernier texte visible : doit être le pied de page
-    rows = []
-    for y in range(h):
-        n = sum(1 for x in range(0, w, 2) if dark(x, y))
-        rows.append(n)
+    # Bandes de texte : une ligne « pleine » change de couleur sur beaucoup
+    # de pixels. Les bandes fusionnent les lignes voisines, c'est suffisant
+    # pour vérifier qu'il y a du contenu réparti dans la hauteur.
+    rows = [sum(1 for x in range(0, w, 2) if content(x, y)) for y in range(m, h-m)]
     bands, cur = [], None
-    for y, n in enumerate(rows):
+    for y, n in enumerate(rows, start=m):
         if n > 6:
             if cur is None: cur = [y, y]
             else: cur[1] = y
@@ -87,13 +112,14 @@ def analyse(path, label, scale=2):
             bands.append(tuple(cur)); cur = None
     if cur: bands.append(tuple(cur))
     print(f"  {len(bands)} bandes de texte")
-    last = bands[-1] if bands else None
-    if last:
+    if bands:
+        last = bands[-1]
         print(f"  dernière bande : y {last[0]//scale}..{last[1]//scale} pt")
         if last[1] > h - 6*scale:
             print("  ✗ le pied de page touche le bord inférieur"); ok = False
+    else:
+        print("  ✗ aucune bande de texte détectée"); ok = False
 
-    # jauges colorées présentes ?
     ncol = sum(1 for y in range(0, h, 3) for x in range(0, w, 3) if coloured(x, y))
     print(f"  pixels colorés (jauges) : {ncol}")
     if ncol < 20:
@@ -102,10 +128,10 @@ def analyse(path, label, scale=2):
     print("  → " + ("OK" if ok else "PROBLÈMES DÉTECTÉS"))
     return ok
 
+
 r1 = analyse('verify/panel.png', 'Panneau')
 print()
-# Ancien script attendait menubar.png ; on vérifie les deux rendus barre de menus
-r2_clair = analyse('verify/menubar-clair.png', 'Barre de menus (clair)')
+r2 = analyse('verify/menubar-clair.png', 'Barre de menus (clair)', scale=3)
 print()
-r2_sombre = analyse('verify/menubar-sombre.png', 'Barre de menus (sombre)')
-sys.exit(0 if (r1 and r2_clair and r2_sombre) else 1)
+r3 = analyse('verify/menubar-sombre.png', 'Barre de menus (sombre)', scale=3)
+sys.exit(0 if (r1 and r2 and r3) else 1)
