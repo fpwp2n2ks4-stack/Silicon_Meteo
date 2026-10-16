@@ -63,8 +63,14 @@ final class PopupView: NSView {
     /// Hauteur **fixe** : le nombre de processus lisibles varie d'un tick à
     /// l'autre (un process quitte la liste, un autre y entre), et caler la
     /// hauteur sur ce nombre ferait sauter le panneau à chaque rafraîchissement.
-    private static let processRowCount = 10
+    private static let processRowCount = 5
     private static let processRowHeight: CGFloat = 13
+    /// Hauteur d'une ligne de la section Bluetooth, alignée sur celle des
+    /// processus.
+    private static let bluetoothRowHeight: CGFloat = 13
+    /// Hauteur d'une ligne de détail sous une jauge (`rowHeight - 4`), comme
+    /// les détails de la mémoire.
+    private static let detailRowHeight: CGFloat = 15
     /// Largeur maximale du nom d'un processus : au-delà, il est tronqué pour
     /// ne pas empiéter sur la colonne du pourcentage.
     private let processNameWidth: CGFloat = 140
@@ -132,18 +138,40 @@ final class PopupView: NSView {
         height += rowHeight * 2           // réseau ↓ ↑
         if snapshot.network.activeInterface != nil { height += rowHeight - 4 }
         height += 8
-        height += rowHeight * 2           // disque ↓ ↑
-        height += rowHeight               // utilisation disque
-        height += 8
+        if snapshot.disk.isPresent {
+            height += rowHeight            // disque : occupation
+            height += Self.detailRowHeight // disque : débit
+            height += Self.detailRowHeight // disque : système + SMART
+            height += 8                    // séparateur avant température
+        }
         if snapshot.temperature.dieCount > 0 { height += rowHeight * 2 - 3 }
-        if snapshot.battery.isPresent { height += 8 + rowHeight }
-        if snapshot.batteryHealth.isPresent {
-            height += 6
-            height += 13                    // ligne état de santé
+        if snapshot.battery.isPresent {
+            height += 8 + rowHeight
+            height += CGFloat(Self.batteryDetailLineCount(snapshot.battery)) * Self.detailRowHeight
+        }
+        if !snapshot.bluetooth.isEmpty {
+            height += 8
+            height += Self.bluetoothRowHeight              // titre « Bluetooth »
+            height += CGFloat(snapshot.bluetooth.count) * Self.bluetoothRowHeight
+            height += 5                                    // espace sous la liste
         }
         height += 8
         height += 12                     // pied de page
         return height
+    }
+
+    /// Nombre de lignes de détail affichées sous la jauge de batterie.
+    ///
+    /// Partagé par `height(for:)` et `draw` : les deux doivent compter
+    /// exactement les mêmes lignes, sinon le panneau est rogné ou laisse un
+    /// blanc. Chaque condition reproduit celle du dessin.
+    private static func batteryDetailLineCount(_ battery: BatteryStatus) -> Int {
+        var count = 0
+        if battery.designCapacityMah > 0 { count += 1 }              // capacités
+        if battery.cycles > 0 || battery.health > 0 { count += 1 }   // santé · cycles
+        if battery.voltage > 0 { count += 1 }                       // V · mA · W
+        if battery.adapterWatts > 0 { count += 1 }                  // adaptateur
+        return count
     }
 
     @available(*, unavailable)
@@ -266,10 +294,12 @@ final class PopupView: NSView {
         // Seconde ligne : l'heure à gauche, la date à droite — cette dernière
         // se cale sous la puce, dans la même colonne.
         //
-        // La date est au **format long** (`DateFormatter.Style.long`), dans la
-        // langue active : « 14 octobre 2026 » en français, « October 14, 2026 »
-        // en anglais. `dateFormat` en dur aurait figé l'ordre jour/mois, propre
-        // au français.
+        // La date est au **format long avec jour de la semaine**
+        // (`DateFormatter.Style.full`), dans la langue active : « Jeudi
+        // 14 octobre 2026 » en français, « Thursday, October 14, 2026 » en
+        // anglais. `dateFormat` en dur aurait figé l'ordre jour/mois, propre
+        // au français. La première lettre est mise en majuscule, la casse
+        // d'origine du formatteur étant minuscule en français (« jeudi »).
         let headerDetailFont = NSFont.systemFont(ofSize: 10)
         let timeFormatter = DateFormatter()
         timeFormatter.dateFormat = "HH:mm:ss"
@@ -278,9 +308,13 @@ final class PopupView: NSView {
 
         let dateFormatter = DateFormatter()
         dateFormatter.locale = Locale(identifier: Localization.current)
-        dateFormatter.dateStyle = .long
+        dateFormatter.dateStyle = .full
         dateFormatter.timeStyle = .none
-        drawRight(dateFormatter.string(from: snapshot.date),
+        // Le formatteur écrit « jeudi » en minuscule en français ; on
+        // capitalise la première lettre pour obtenir « Jeudi 14 octobre 2026 ».
+        let dateString = dateFormatter.string(from: snapshot.date)
+        let capitalizedDate = String(dateString.prefix(1)).uppercased() + String(dateString.dropFirst())
+        drawRight(capitalizedDate,
                   at: NSPoint(x: padding, y: y), rightEdge: bounds.width - padding,
                   font: headerDetailFont, color: secondary)
         y += rowHeight + 4
@@ -416,28 +450,43 @@ final class PopupView: NSView {
         y += 8
 
         // ---- Disque ----
-        let diskPeak = max(snapshot.disk.readPerSecond, snapshot.disk.writePerSecond)
-        drawRow(label: L("Disk ↓"),
-                value: Formatters.rate(snapshot.disk.readPerSecond),
-                at: y, primary: primary, secondary: secondary,
-                fraction: DiskUsage.loadFraction(bytesPerSecond: diskPeak))
-        y += rowHeight
-        drawRow(label: L("Disk ↑"),
-                value: Formatters.rate(snapshot.disk.writePerSecond),
-                at: y, primary: primary, secondary: secondary,
-                fraction: DiskUsage.loadFraction(bytesPerSecond: diskPeak))
-        y += rowHeight
-        drawRow(label: L("Disk"),
-                value: "\(Int(snapshot.diskSpace.fraction * 100)) %",
-                at: y, primary: primary, secondary: secondary,
-                fraction: snapshot.diskSpace.fraction)
-        y += rowHeight
-        draw("\(Formatters.bytes(snapshot.diskSpace.used)) / \(Formatters.bytes(snapshot.diskSpace.total))",
-             at: NSPoint(x: padding + 92, y: y), font: .systemFont(ofSize: 10), color: secondary)
-        y += rowHeight
+        // Occupation du volume racine, puis un relevé compact : débit d'un
+        // côté, identité du volume et santé du SSD de l'autre. La température
+        // et la santé proviennent du cache SMART (rafraîchi toutes les 60 s) ;
+        // elles n'apparaissent que si le SSD les expose.
+        if snapshot.disk.isPresent {
+            let disk = snapshot.disk
+            let detailFont = NSFont.systemFont(ofSize: 10)
+            let detailX = padding + 92
 
-        drawSeparator(y: y)
-        y += 8
+            drawRow(label: L("Disk"),
+                    value: "\(Int((disk.fraction * 100).rounded())) %",
+                    at: y, primary: primary, secondary: secondary,
+                    fraction: disk.fraction)
+            y += rowHeight
+
+            draw(L("read %1$@ · write %2$@",
+                   Formatters.rate(disk.readPerSecond),
+                   Formatters.rate(disk.writePerSecond)),
+                 at: NSPoint(x: detailX, y: y), font: detailFont, color: secondary)
+            y += Self.detailRowHeight
+
+            // Occupation en clair, puis identité du volume ; la température et
+            // la santé ne s'ajoutent que si le SMART a pu être lu.
+            var detail = "\(Formatters.bytes(disk.used)) / \(Formatters.bytes(disk.total))"
+            if !disk.fileSystem.isEmpty { detail += " · \(disk.fileSystem)" }
+            if let temperature = disk.smartTemperature {
+                detail += String(format: " · %.0f °C", temperature)
+            }
+            if let health = disk.smartHealth {
+                detail += " · " + L("health %d %%", health)
+            }
+            draw(detail, at: NSPoint(x: detailX, y: y), font: detailFont, color: secondary)
+            y += Self.detailRowHeight
+
+            drawSeparator(y: y)
+            y += 8
+        }
 
         // ---- Température ----
         if snapshot.temperature.dieCount > 0 {
@@ -479,30 +528,66 @@ final class PopupView: NSView {
                                              atChargeLimit: snapshot.battery.isAtChargeLimit,
                                              isLowPowerMode: snapshot.battery.isLowPowerMode))
             y += rowHeight
+
+            // Détails matériels, en petit sous la jauge. Les conditions
+            // doivent rester synchronisées avec `batteryDetailLineCount`,
+            // qui réserve exactement ces lignes.
+            let battery = snapshot.battery
+            let detailFont = NSFont.systemFont(ofSize: 10)
+            let detailX = padding + 92
+
+            if battery.designCapacityMah > 0 {
+                draw("\(battery.maxCapacityMah) / \(battery.designCapacityMah) mAh",
+                     at: NSPoint(x: detailX, y: y), font: detailFont, color: secondary)
+                y += Self.detailRowHeight
+            }
+            if battery.cycles > 0 || battery.health > 0 {
+                draw(L("health %1$d %% · %2$d cycles", battery.health, battery.cycles),
+                     at: NSPoint(x: detailX, y: y), font: detailFont, color: secondary)
+                y += Self.detailRowHeight
+            }
+            if battery.voltage > 0 {
+                // Courant signé (négatif en décharge), puissance en valeur
+                // absolue : même convention que la batterie de Stats.
+                draw(String(format: "%.2f V · %.0f mA · %.1f W",
+                            battery.voltage, battery.amperage, abs(battery.power)),
+                     at: NSPoint(x: detailX, y: y), font: detailFont, color: secondary)
+                y += Self.detailRowHeight
+            }
+            if battery.adapterWatts > 0 {
+                var adapter = "\(battery.adapterWatts) W"
+                if battery.adapterVoltage > 0 {
+                    adapter += String(format: " · %.2f V", battery.adapterVoltage)
+                }
+                draw(L("adapter %@", adapter),
+                     at: NSPoint(x: detailX, y: y), font: detailFont, color: secondary)
+                y += Self.detailRowHeight
+            }
         }
 
-        // ---- État de santé batterie ----
-        if snapshot.batteryHealth.isPresent {
+        // ---- Bluetooth ----
+        // Niveaux des accessoires (AirPods, souris…). La hauteur suit le
+        // nombre de périphériques : ceux-ci ne varient pas d'un tick à
+        // l'autre, contrairement à la liste des processus.
+        if !snapshot.bluetooth.isEmpty {
             drawSeparator(y: y)
-            y += 6
-            var valueParts: [String] = []
-            if let condition = snapshot.batteryHealth.condition,
-               !condition.isEmpty {
-                valueParts.append(L(condition))
+            y += 8
+            draw(L("Bluetooth"), at: NSPoint(x: padding, y: y),
+                 font: .systemFont(ofSize: 11, weight: .medium), color: primary)
+            y += Self.bluetoothRowHeight
+
+            let nameFont = NSFont.systemFont(ofSize: 9)
+            let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+            for device in snapshot.bluetooth {
+                let name = truncated(device.name, toWidth: processNameWidth, font: nameFont)
+                draw(name, at: NSPoint(x: padding, y: y), font: nameFont, color: secondary)
+                drawRight(componentsText(device.components),
+                          at: NSPoint(x: bounds.width / 2, y: y),
+                          rightEdge: bounds.width - padding,
+                          font: valueFont, color: secondary)
+                y += Self.bluetoothRowHeight
             }
-            if let maxCap = snapshot.batteryHealth.maximumCapacity {
-                valueParts.append(L("%1$d %%", maxCap))
-            }
-            if let cycles = snapshot.batteryHealth.cycleCount {
-                valueParts.append(L("%1$d cycles", cycles))
-            }
-            if !valueParts.isEmpty {
-                let text = L("Battery health") + " : " + valueParts.joined(separator: " · ")
-                draw(text, at: NSPoint(x: padding, y: y), font: .systemFont(ofSize: 9), color: secondary)
-                y += 13
-            } else {
-                y += 7
-            }
+            y += 5
         }
 
         // ---- Pied de page ----
@@ -624,6 +709,28 @@ final class PopupView: NSView {
         drawRight(memory, at: NSPoint(x: bounds.width / 2, y: y),
                   rightEdge: bounds.width - padding - killColumnWidth,
                   font: valueFont, color: secondary)
+    }
+
+    /// Niveaux d'un périphérique Bluetooth, sous forme compacte :
+    /// « L 100 % · R 100 % · C 43 % », ou « 85 % » pour une valeur unique.
+    private func componentsText(_ components: [BluetoothComponent]) -> String {
+        components.map { component in
+            let prefix = shortLabel(component.kind)
+            let level = "\(component.level) %"
+            return prefix.isEmpty ? level : "\(prefix) \(level)"
+        }.joined(separator: " · ")
+    }
+
+    /// Abrégé d'une composante. Les lettres restent neutres (`L`, `R`, `C`)
+    /// plutôt que traduites : deux oreillettes et un boîtier doivent tenir
+    /// sur une seule ligne, et ces symboles se lisent dans les quatre langues.
+    private func shortLabel(_ kind: String) -> String {
+        switch kind {
+        case "left": return "L"
+        case "right": return "R"
+        case "case": return "C"
+        default: return ""
+        }
     }
 
     /// Bouton de terminaison, dessiné uniquement sur la ligne survolée.

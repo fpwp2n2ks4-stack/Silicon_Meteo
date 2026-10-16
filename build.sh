@@ -56,15 +56,12 @@ for lproj in Resources/*.lproj; do
     cp -R "$lproj" "$APP_BUNDLE/Contents/Resources/"
 done
 
-# Icône de l'application : le `.icns` est versionné, produit par
-# `Resources/make-icon.swift` à partir de `toaster.svg`. Le copier ici garde le
-# build sans dépendance : seul `iconutil`/AppKit sert à le (re)générer, jamais à
-# le consommer.
+# Icône du bundle : le `.icns` versionné, pas le SVG. Il est référencé par
+# CFBundleIconFile dans l'Info.plist ci-dessous ; sans lui, Finder et les
+# boîtes de dialogue affichent l'icône générique. Le SVG sert uniquement de
+# source à `Resources/make-icon.swift`, hors build.
 echo "▸ Icône"
-for icns in Resources/*.icns; do
-    [ -f "$icns" ] || continue
-    cp "$icns" "$APP_BUNDLE/Contents/Resources/"
-done
+cp "Resources/$APP_NAME.icns" "$APP_BUNDLE/Contents/Resources/"
 
 echo "▸ Compilation (arm64 natif)"
 swiftc \
@@ -111,12 +108,11 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
     <string>1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
-    <!-- Toasty.icns, copié depuis Resources/ : icône de l'app dans le Finder. -->
-    <key>CFBundleIconFile</key>
-    <string>$APP_NAME</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <!-- Agent de barre de menus : pas d'icône dans le Dock, pas de menu App -->
+    <key>CFBundleIconFile</key>
+    <string>$APP_NAME</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>
@@ -146,7 +142,12 @@ if [ "$INSTALL" = "1" ]; then
         && echo "  → $INSTALL_DIR/$APP_NAME.app (signature vérifiée)"
 fi
 
+# `if` plutôt que `A && B` en dernière ligne : sans `--install`, le `&&`
+# échouerait et ferait sortir le script avec le code 1 alors que le build a
+# réussi.
 echo
 echo "✓ $APP_BUNDLE construit"
 echo "  Lancer    : open $APP_BUNDLE"
-[ "$INSTALL" = "1" ] && echo "  Installée : open $INSTALL_DIR/$APP_NAME.app"
+if [ "$INSTALL" = "1" ]; then
+    echo "  Installée : open $INSTALL_DIR/$APP_NAME.app"
+fi

@@ -9,7 +9,6 @@
 import Foundation
 import IOKit
 import IOKit.ps
-import IOKit.storage
 import Darwin
 
 // MARK: - Déclarations IOKit non exposées au module Swift
@@ -120,23 +119,6 @@ public struct NetworkUsage {
     }
 }
 
-public struct DiskUsage {
-    public var readPerSecond: Double = 0    // octets/s
-    public var writePerSecond: Double = 0   // octets/s
-
-    public static func loadFraction(bytesPerSecond: Double) -> Double {
-        guard bytesPerSecond > 0 else { return 0 }
-        let normalized = log10(1 + bytesPerSecond / 5_000_000) / 2.5
-        return min(1, max(0, normalized))
-    }
-}
-
-public struct DiskSpace {
-    public var used: Double = 0
-    public var total: Double = 0
-    public var fraction: Double { total > 0 ? used / total : 0 }
-}
-
 public struct BatteryStatus {
     // swiftlint:disable implicit_optional_initialization
     // `= nil` est explicite ici parce que ces propriétés sont publiques :
@@ -157,6 +139,39 @@ public struct BatteryStatus {
 
     /// Motif pour lequel macOS refuse de charger (`ChargerData.NotChargingReason`).
     public var notChargingReason: Int = 0
+
+    // MARK: Détails matériels (`AppleSmartBattery`)
+    //
+    // Lus dans l'IORegistry et non dans la description IOPS : la santé, les
+    // cycles, les capacités et la tension/courant n'y figurent pas. Ils
+    // viennent du même service que `ChargerData`, donc d'un seul accès.
+
+    /// Santé en pourcentage : capacité maximale actuelle rapportée à la
+    /// capacité d'origine. Plafonnée à 100, comme Statistiques système.
+    public var health: Int = 0
+    /// Nombre de cycles de charge.
+    public var cycles: Int = 0
+    /// Capacité maximale actuelle, en mAh.
+    public var maxCapacityMah: Int = 0
+    /// Capacité d'origine (conçue), en mAh.
+    public var designCapacityMah: Int = 0
+    /// Tension de la batterie, en volts.
+    public var voltage: Double = 0
+    /// Courant de la batterie, en milliampères. **Signé** : négatif en
+    /// décharge (relevé à `-376` sur cette machine au repos, débranchée).
+    public var amperage: Double = 0
+    /// Puissance nominale du chargeur, en watts. Vaut 0 quand aucun
+    /// adaptateur n'est branché : IOPS ne renvoie alors rien.
+    public var adapterWatts: Int = 0
+    /// Tension négociée de l'adaptateur, en volts. 0 si non branché.
+    public var adapterVoltage: Double = 0
+
+    /// Puissance instantanée de la batterie, en watts.
+    ///
+    /// Dérivée des deux mesures brutes du contrôleur (`voltage` × `amperage`),
+    /// comme Stats. On n'utilise **pas** la clé SMC `PPBR` : elle exige le
+    /// helper privilégié de Stats, que Toasty n'a pas.
+    public var power: Double { voltage * amperage / 1000 }
 
     /// macOS a décidé de lui-même de ne plus monter la charge : seuil de
     /// charge atteint, ou charge optimisée qui retient la batterie aux
@@ -188,13 +203,6 @@ public struct BatteryStatus {
     private static let chargeLimitBit = 0x0100_0000
 }
 
-public struct BatteryHealth {
-    public var isPresent: Bool = false
-    public var condition: String? = nil
-    public var maximumCapacity: Int? = nil
-    public var cycleCount: Int? = nil
-}
-
 public struct GPUUsage {
     public var deviceUtilization: Int = 0     // 0...100
     public var inUseMemory: Double = 0         // octets
@@ -224,17 +232,45 @@ public struct ProcessUsage: Sendable {
     public var memory: Double = 0
 }
 
+/// Occupation et activité du disque de démarrage.
+///
+/// Trois sources, trois cadences. L'occupation (`statfs`) et l'activité
+/// (compteurs IOKit) sont bon marché et relues à chaque tick ; le SMART NVMe
+/// envoie une commande administrative au contrôleur, donc il est confié à un
+/// lecteur séparé qui met son résultat en cache (`DiskSmartReader`).
+public struct DiskUsage: Sendable {
+    /// Faux si le volume racine n'a pas pu être lu : la section est masquée.
+    public var isPresent: Bool = false
+    /// Espace occupé et capacité totale du volume racine, en octets.
+    public var used: Double = 0
+    public var total: Double = 0
+    public var free: Double = 0
+    /// Type du système de fichiers du volume racine (« APFS »…).
+    public var fileSystem: String = ""
+
+    /// Débit lecture/écriture, en octets par seconde. Somme des disques
+    /// physiques ; les images disque montées sont écartées.
+    public var readPerSecond: Double = 0
+    public var writePerSecond: Double = 0
+
+    /// Température du SSD en °C, si le SMART est lisible.
+    public var smartTemperature: Double? = nil
+    /// Santé du SSD en pourcentage (100 = neuf), si lisible.
+    public var smartHealth: Int? = nil
+
+    public var fraction: Double { total > 0 ? used / total : 0 }
+}
+
 public struct Snapshot {
     public var cpu: CPUUsage = CPUUsage()
     public var memory: MemoryUsage = MemoryUsage()
     public var network: NetworkUsage = NetworkUsage()
+    public var disk: DiskUsage = DiskUsage()
     public var battery: BatteryStatus = BatteryStatus()
     public var gpu: GPUUsage = GPUUsage()
     public var temperature: Temperature = Temperature()
-    public var batteryHealth: BatteryHealth = BatteryHealth()
-    public var disk: DiskUsage = DiskUsage()
-    public var diskSpace: DiskSpace = DiskSpace()
     public var processes: [ProcessUsage] = []
+    public var bluetooth: [BluetoothDevice] = []
     public var date: Date = Date()
 }
 
@@ -245,6 +281,28 @@ private func ioProperty(_ service: io_object_t, _ key: String) -> AnyObject? {
         return nil
     }
     return ref.takeRetainedValue()
+}
+
+/// Un `CFNumber` de l'IORegistry se pont vers `NSNumber` quel que soit son
+/// type sous-jacent (`SInt64`, `Double`…). Passer par `NSNumber` évite de
+/// supposer lequel : `Voltage` arrive parfois signé, parfois flottant selon
+/// la machine, et un `as? Int` trop strict rendrait alors `nil`.
+private func intValue(_ value: Any?) -> Int? {
+    (value as? NSNumber)?.intValue
+}
+
+private func doubleValue(_ value: Any?) -> Double? {
+    (value as? NSNumber)?.doubleValue
+}
+
+/// Toutes les propriétés d'une entrée IORegistry, en une seule ouverture.
+private func ioRegistryProperties(_ service: io_object_t) -> [String: Any]? {
+    var reference: Unmanaged<CFMutableDictionary>?
+    guard IORegistryEntryCreateCFProperties(service, &reference,
+                                            kCFAllocatorDefault, 0) == kIOReturnSuccess,
+          let dictionary = reference?.takeRetainedValue() as? [String: Any]
+    else { return nil }
+    return dictionary
 }
 
 // MARK: - CPU
@@ -447,6 +505,12 @@ public struct BatteryReader: Sendable {
     public init() {}
 
     public func read() -> BatteryStatus {
+        // Une seule ouverture du service pour toutes les valeurs IORegistry
+        // (motif de non-charge, santé, cycles, capacités, tension/courant,
+        // adaptateur) : l'ancienne version ouvrait le service juste pour
+        // `NotChargingReason`, ce qui doublait les accès.
+        let hardware = smartBatteryProperties()
+
         guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef],
               let first = list.first,
@@ -470,6 +534,38 @@ public struct BatteryReader: Sendable {
             remaining = description[kIOPSTimeToEmptyKey as String] as? Int
         }
 
+        // --- Détails matériels ---
+        let batteryData = hardware["BatteryData"] as? [String: Any]
+        let chargerData = hardware["ChargerData"] as? [String: Any]
+
+        let design = intValue(hardware["DesignCapacity"])
+            ?? intValue(batteryData?["DesignCapacity"])
+            ?? 0
+        // Sur Apple Silicon, `MaxCapacity` vaut 100 (un pourcentage) : la
+        // capacité réelle est dans `AppleRawMaxCapacity`, à défaut dans
+        // `BatteryData`. On préfère ensuite `FullChargeCapacity` (capacité
+        // réellement mesurée à pleine charge) à `NominalChargeCapacity`
+        // (valeur nominale, qui peut dépasser la capacité de conception et
+        // gonfler artificiellement la santé). Stats fait l'inverse ; ce choix
+        // rend la santé plus fidèle à l'usure réelle.
+        let maximum = intValue(hardware["AppleRawMaxCapacity"])
+            ?? intValue(batteryData?["FullChargeCapacity"])
+            ?? intValue(batteryData?["NominalChargeCapacity"])
+            ?? 0
+        let health = design > 0
+            ? min(100, Int((100.0 * Double(maximum) / Double(design)).rounded()))
+            : 0
+
+        // L'adaptateur n'est décrit par IOPS que lorsqu'il est branché.
+        let adapter = IOPSCopyExternalPowerAdapterDetails()?.takeRetainedValue() as? [String: Any]
+        let adapterDetails = hardware["AdapterDetails"] as? [String: Any]
+        let adapterWatts = intValue(adapter?["Watts"])
+            ?? intValue(adapterDetails?["Watts"])
+            ?? 0
+        let adapterVoltage = plugged
+            ? Double(intValue(adapterDetails?["AdapterVoltage"]) ?? 0) / 1000
+            : 0
+
         return BatteryStatus(
             level: level,
             isCharging: charging,
@@ -477,165 +573,216 @@ public struct BatteryReader: Sendable {
             isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled,
             timeRemainingMinutes: (remaining ?? 0) > 0 ? remaining : nil,
             isPresent: true,
-            notChargingReason: self.notChargingReason()
+            notChargingReason: intValue(chargerData?["NotChargingReason"]) ?? 0,
+            health: health,
+            cycles: intValue(hardware["CycleCount"]) ?? 0,
+            maxCapacityMah: maximum,
+            designCapacityMah: design,
+            voltage: (doubleValue(hardware["Voltage"]) ?? 0) / 1000,
+            amperage: doubleValue(hardware["Amperage"]) ?? 0,
+            adapterWatts: adapterWatts,
+            adapterVoltage: adapterVoltage
         )
     }
 
-    /// `AppleSmartBattery.ChargerData.NotChargingReason`.
+    /// Toutes les propriétés de l'`AppleSmartBattery`, en un seul accès.
     ///
-    /// Ce champ n'est **pas** dans la description IOPS : il faut aller le
-    /// chercher dans l'IORegistry. La référence IOKit est relâchée avant
-    /// de rendre la main — la conserver au-delà de l'appel est inutile et
-    /// invite aux invalides d'usage.
-    private func notChargingReason() -> Int {
+    /// `ChargerData` (motif de non-charge), `BatteryData` (capacités) et
+    /// `AdapterDetails` (adaptateur) sont des dictionnaires imbriqués : les
+    /// extraire séparément multiplierait les ouvertures du service. La
+    /// référence IOKit est relâchée avant de rendre la main — la conserver
+    /// au-delà de l'appel invite aux invalides d'usage.
+    private func smartBatteryProperties() -> [String: Any] {
         var iterator: io_iterator_t = 0
         guard IOServiceGetMatchingServices(kIOMainPortDefault,
                                           IOServiceMatching("AppleSmartBattery"),
-                                          &iterator) == kIOReturnSuccess else { return 0 }
+                                          &iterator) == kIOReturnSuccess else { return [:] }
         let service = IOIteratorNext(iterator)
         IOObjectRelease(iterator)
-        guard service != 0 else { return 0 }
+        guard service != 0 else { return [:] }
         defer { IOObjectRelease(service) }
 
-        guard let data = IORegistryEntryCreateCFProperty(service, "ChargerData" as CFString,
-                                                          kCFAllocatorDefault, 0)?
-                         .takeRetainedValue() as? [String: Any]
-        else { return 0 }
-        return data["NotChargingReason"] as? Int ?? 0
+        var reference: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(service, &reference,
+                                                kCFAllocatorDefault, 0) == kIOReturnSuccess,
+              let dictionary = reference?.takeRetainedValue() as? [String: Any]
+        else { return [:] }
+        return dictionary
     }
 }
 
-public struct BatteryHealthReader: Sendable {
-    public init() {}
+// MARK: - Bluetooth
 
-    public func read() -> BatteryHealth {
-        var health = BatteryHealth()
+/// Un niveau de charge rattaché à un périphérique Bluetooth.
+///
+/// Un casque peut exposer plusieurs valeurs : `left`, `right` et `case`.
+/// `battery` désigne une valeur unique (souris, clavier…).
+public struct BluetoothComponent: Sendable {
+    public var kind: String        // "battery" | "left" | "right" | "case"
+    public var level: Int          // 0...100
+    public var isCharging: Bool
 
-        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
-              let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef],
-              let first = list.first,
-              let description = IOPSGetPowerSourceDescription(info, first)?.takeUnretainedValue() as? [String: Any]
-        else {
-            return health
-        }
-
-        health.isPresent = true
-        if let condition = description[kIOPSBatteryHealthConditionKey as String] as? String {
-            health.condition = condition
-        } else if let healthKey = description[kIOPSBatteryHealthKey as String] as? String {
-            health.condition = healthKey
-        }
-        if let maxCap = description[kIOPSMaxCapacityKey as String] as? Int {
-            health.maximumCapacity = maxCap
-        }
-
-        var iterator: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault,
-                                           IOServiceMatching("AppleSmartBattery"),
-                                           &iterator) == kIOReturnSuccess else {
-            return health
-        }
-        let service = IOIteratorNext(iterator)
-        IOObjectRelease(iterator)
-        guard service != 0 else { return health }
-        defer { IOObjectRelease(service) }
-
-        if let data = IORegistryEntryCreateCFProperty(service, "BatteryData" as CFString,
-                                                      kCFAllocatorDefault, 0)?
-                        .takeRetainedValue() as? [String: Any],
-           let cycles = data["CycleCount"] as? Int {
-            health.cycleCount = cycles
-        } else if let cycle = description["CycleCount"] as? Int {
-            health.cycleCount = cycle
-        }
-
-        return health
+    public init(kind: String, level: Int, isCharging: Bool = false) {
+        self.kind = kind
+        self.level = level
+        self.isCharging = isCharging
     }
 }
 
-public final class DiskSpaceReader: @unchecked Sendable {
-    public init() {}
+public struct BluetoothDevice: Sendable {
+    public var name: String
+    public var components: [BluetoothComponent]
 
-    public func read() -> DiskSpace {
-        var stats = statfs()
-        guard statfs("/", &stats) == 0 else { return DiskSpace() }
-        let total = Double(stats.f_blocks) * Double(stats.f_bsize)
-        let free = Double(stats.f_bavail) * Double(stats.f_bsize)
-        let used = max(0, total - free)
-        return DiskSpace(used: used, total: total)
+    public init(name: String, components: [BluetoothComponent]) {
+        self.name = name
+        self.components = components
     }
 }
 
-public final class DiskReader: @unchecked Sendable {
-    private struct Counters {
-        var read: UInt64 = 0
-        var write: UInt64 = 0
-    }
-    private var previous: Counters = Counters()
-    private var lastTimestamp: Date?
+/// Niveaux de charge des accessoires Bluetooth (AirPods, souris, casques…).
+///
+/// ## Pourquoi `pmset`, et pas CoreBluetooth
+///
+/// Ces valeurs ne sont **pas** dans `IOPSCopyPowerSourcesInfo` : mesuré sur
+/// cette machine, il ne renvoie que la batterie interne. CoreBluetooth, lui,
+/// exige une autorisation TCC (`NSBluetoothAlwaysUsageDescription`) et un
+/// balayage actif ; Toasty n'a ni l'un ni l'autre.
+///
+/// `pmset -g accps -xml` est le même service que celui qui alimente
+/// l'indicateur de batterie des accessoires dans la barre de menus de macOS.
+/// Il est bon marché (~15 ms) et ne demande aucun privilège. On le met en
+/// cache : les niveaux des accessoires bougent lentement, inutile de lancer
+/// un sous-processus toutes les 2 s.
+///
+/// Limite assumée : seuls les accessoires dont macOS connaît la batterie
+/// apparaissent. Un périphérique sans niveau exposé est simplement absent.
+public final class BluetoothReader: @unchecked Sendable {
+    private var cached: (date: Date, devices: [BluetoothDevice])?
+    private let timeToLive: TimeInterval = 20
 
     public init() {}
 
-    public func read() -> DiskUsage {
-        let now = Date()
-        guard let stats = self.diskStatistics() else {
-            lastTimestamp = now
-            previous = Counters()
-            return DiskUsage()
+    public func read() -> [BluetoothDevice] {
+        if let cached, Date().timeIntervalSince(cached.date) < timeToLive {
+            return cached.devices
         }
-        let current = Counters(read: stats.read, write: stats.write)
-
-        guard let last = lastTimestamp else {
-            previous = current
-            lastTimestamp = now
-            return DiskUsage()
-        }
-        let elapsed = now.timeIntervalSince(last)
-        guard elapsed > 0 else { return DiskUsage() }
-
-        let deltaRead = Double(current.read &- previous.read)
-        let deltaWrite = Double(current.write &- previous.write)
-
-        previous = current
-        lastTimestamp = now
-
-        return DiskUsage(
-            readPerSecond: deltaRead / elapsed,
-            writePerSecond: deltaWrite / elapsed
-        )
+        let devices = Self.collect()
+        cached = (Date(), devices)
+        return devices
     }
 
-    private struct DiskStats {
-        var read: UInt64 = 0
-        var write: UInt64 = 0
+    private static func collect() -> [BluetoothDevice] {
+        guard let output = accessoryPowerSources() else { return [] }
+
+        var groups: [String: [[String: Any]]] = [:]
+        var standalone: [[String: Any]] = []
+        for entry in powerSourcePlistEntries(output) {
+            // Le bloc « batterie interne » n'est pas un accessoire : il est
+            // déjà lu par `BatteryReader`. Seuls les accessoires nous
+            // intéressent.
+            guard entry["Type"] as? String == "Accessory Source" else { continue }
+            if let group = entry["Group Identifier"] as? String {
+                groups[group, default: []].append(entry)
+            } else {
+                standalone.append(entry)
+            }
+        }
+
+        var devices = standalone.compactMap(device(from:))
+        for entries in groups.values {
+            if let device = device(fromGroup: entries) { devices.append(device) }
+        }
+        return devices.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
     }
 
-    private func diskStatistics() -> DiskStats? {
-        var iterator: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault,
-                                           IOServiceMatching("IOBlockStorageDriver"),
-                                           &iterator) == kIOReturnSuccess else {
+    /// Périphérique dont les niveaux tiennent en une seule entrée.
+    private static func device(from entry: [String: Any]) -> BluetoothDevice? {
+        guard let name = entry["Name"] as? String else { return nil }
+        let kind = (entry["Part Identifier"] as? String)?.lowercased() ?? "battery"
+        guard let component = component(from: entry, kind: kind) else { return nil }
+        return BluetoothDevice(name: name, components: [component])
+    }
+
+    /// Périphérique décrit par plusieurs entrées partageant un
+    /// `Group Identifier` : un casque expose ses deux oreillettes (et son
+    /// boîtier) comme autant de sources séparées.
+    private static func device(fromGroup entries: [[String: Any]]) -> BluetoothDevice? {
+        let combined = entries.first { $0["Part Identifier"] as? String == "Combined" }
+        let caseEntry = entries.first { $0["Part Identifier"] as? String == "Case" }
+        // `Combined` porte le nom « propre » ; le boîtier s'appelle par
+        // exemple « Boîtier AirPods de Yves ».
+        let name = combined?["Name"] as? String
+            ?? entries.first { $0["Part Identifier"] as? String != "Case" }?["Name"] as? String
+            ?? entries.first?["Name"] as? String
+            ?? ""
+
+        var components: [BluetoothComponent] = []
+        for part in combined?["Combined Parts"] as? [[String: Any]] ?? [] {
+            guard let kind = (part["Part Identifier"] as? String)?.lowercased(),
+                  let component = component(from: part, kind: kind)
+            else { continue }
+            components.append(component)
+        }
+        if let caseEntry, let component = component(from: caseEntry, kind: "case") {
+            components.append(component)
+        }
+        if components.isEmpty,
+           let single = combined ?? entries.first,
+           let component = component(from: single, kind: "battery") {
+            components.append(component)
+        }
+
+        guard !components.isEmpty else { return nil }
+        return BluetoothDevice(name: name, components: components)
+    }
+
+    private static func component(from entry: [String: Any], kind: String) -> BluetoothComponent? {
+        guard let level = intValue(entry["Current Capacity"]) else { return nil }
+        let charging = entry["Is Charging"] as? Bool ?? false
+        return BluetoothComponent(kind: kind, level: level, isCharging: charging)
+    }
+
+    /// Décode la sortie de `pmset -g accps -xml`.
+    ///
+    /// `pmset` imprime **plusieurs** plists à la suite, un par source
+    /// d'alimentation, chacun précédé de sa déclaration `<?xml`. On découpe
+    /// donc sur ce marqueur, puis on limite chaque fragment à son `</plist>`
+    /// — sinon les quelques octets qui suivent (retour à la ligne, prochaine
+    /// déclaration) gêneraient l'analyseur.
+    private static func powerSourcePlistEntries(_ output: String) -> [[String: Any]] {
+        var entries: [[String: Any]] = []
+        for fragment in output.components(separatedBy: "<?xml").dropFirst() {
+            guard let end = fragment.range(of: "</plist>") else { continue }
+            let xml = "<?xml" + fragment[fragment.startIndex..<end.upperBound]
+            guard let data = xml.data(using: .utf8),
+                  let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+                  let dictionary = plist as? [String: Any]
+            else { continue }
+            entries.append(dictionary)
+        }
+        return entries
+    }
+
+    /// Exécute `pmset -g accps -xml` et renvoie sa sortie standard.
+    private static func accessoryPowerSources() -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        process.arguments = ["-g", "accps", "-xml"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
             return nil
         }
-        defer { IOObjectRelease(iterator) }
-
-        var stats: DiskStats?
-        while case let service = IOIteratorNext(iterator), service != 0 {
-            defer { IOObjectRelease(service) }
-            guard let properties = IORegistryEntryCreateCFProperty(service,
-                                                                   kIOBlockStorageDriverStatisticsKey as CFString,
-                                                                   kCFAllocatorDefault,
-                                                                   0)?
-                                    .takeRetainedValue() as? [String: Any] else {
-                continue
-            }
-            if let read = properties[kIOBlockStorageDriverStatisticsBytesReadKey as String] as? UInt64,
-               let write = properties[kIOBlockStorageDriverStatisticsBytesWrittenKey as String] as? UInt64 {
-                stats = DiskStats(read: read, write: write)
-                break
-            }
-        }
-        return stats
+        // Lire jusqu'à EOF **avant** d'attendre la fin évite tout blocage si
+        // la sortie dépassait la taille du tampon du pipe.
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(data: data, encoding: .utf8)
     }
 }
 
@@ -867,7 +1014,7 @@ public final class ProcessReader: @unchecked Sendable {
         return String(cString: buffer)
     }
 
-    public func read(limit: Int = 10) -> [ProcessUsage] {
+    public func read(limit: Int = 5) -> [ProcessUsage] {
         let now = Date()
         let elapsed = lastDate.map { now.timeIntervalSince($0) } ?? 0
 
@@ -942,24 +1089,339 @@ public enum ProcessControl {
     }
 }
 
+// MARK: - Disque
+
+/// Occupation du volume racine, via `statfs(2)`.
+///
+/// On lit `/` plutôt qu'un chemin arbitraire : c'est le volume qui porte le
+/// système et, sur un Mac, celui qui compte. `f_bavail` (et non `f_bfree`)
+/// donne l'espace réellement utilisable par l'utilisateur, celui que le
+/// Finder affiche.
+private enum DiskCapacity {
+    static func read() -> (used: Double, total: Double, free: Double, fileSystem: String) {
+        var info = statfs()
+        guard statfs("/", &info) == 0 else { return (0, 0, 0, "") }
+
+        let blockSize = Double(info.f_bsize)
+        let total = Double(info.f_blocks) * blockSize
+        let available = Double(info.f_bavail) * blockSize
+        let used = max(0, total - available)
+
+        // `f_fstypename` est un tableau C de longueur fixe : on le relit comme
+        // une chaîne terminée par NUL. « apfs » devient « APFS » pour la même
+        // raison que « SSD » : les sigles se lisent en majuscules.
+        let fileSystem = withUnsafeBytes(of: info.f_fstypename) { raw -> String in
+            guard let base = raw.baseAddress else { return "" }
+            return String(cString: base.assumingMemoryBound(to: CChar.self))
+        }.uppercased()
+
+        return (used, total, available, fileSystem)
+    }
+}
+
+/// Débit disque, d'après les compteurs cumulés de `IOBlockStorageDriver`.
+///
+/// IOKit expose, pour chaque disque physique, un dictionnaire `Statistics`
+/// contenant les octets lus/écrits depuis le démarrage. Comme pour le réseau,
+/// le débit est une **différence** entre deux relevés rapportée au temps
+/// écoulé : un compteur seul ne dit rien d'un débit.
+///
+/// Les images disque (DMG, sparse bundles) sont écartées : ce sont des
+/// fichiers, pas des écritures physiques, et elles gonfleraient un débit qui
+/// ne correspond à aucun disque réel.
+public final class DiskActivityReader: @unchecked Sendable {
+    private var previous: (read: Double, write: Double)?
+    private var lastTimestamp: Date?
+
+    public init() {}
+
+    public func read() -> (read: Double, write: Double) {
+        guard let counters = Self.counters() else { return (0, 0) }
+        let now = Date()
+        guard let last = lastTimestamp, let old = previous else {
+            previous = counters
+            lastTimestamp = now
+            return (0, 0)
+        }
+        let elapsed = now.timeIntervalSince(last)
+        previous = counters
+        lastTimestamp = now
+        guard elapsed > 0 else { return (0, 0) }
+
+        // Un compteur qui recule (disque retiré/rebranché) donnerait une
+        // différence absurde : on repart de zéro pour ce relevé.
+        let read = counters.read >= old.read ? (counters.read - old.read) / elapsed : 0
+        let write = counters.write >= old.write ? (counters.write - old.write) / elapsed : 0
+        return (read, write)
+    }
+
+    private static func counters() -> (read: Double, write: Double)? {
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault,
+                                           IOServiceMatching("IOBlockStorageDriver"),
+                                           &iterator) == kIOReturnSuccess
+        else { return nil }
+        defer { IOObjectRelease(iterator) }
+
+        var read: Double = 0
+        var write: Double = 0
+        while case let service = IOIteratorNext(iterator), service != 0 {
+            defer { IOObjectRelease(service) }
+            guard !isDiskImage(service) else { continue }
+            guard let properties = ioRegistryProperties(service),
+                  let statistics = properties["Statistics"] as? [String: Any]
+            else { continue }
+            read += doubleValue(statistics["Bytes (Read)"]) ?? 0
+            write += doubleValue(statistics["Bytes (Write)"]) ?? 0
+        }
+        return (read, write)
+    }
+
+    /// Vrai si le service appartient à une image disque montée.
+    ///
+    /// Les images disque sont portées par `IOHDIXController` / `IOHDIXHDDrive`.
+    /// On remonte la chaîne des parents : leur `IOBlockStorageDriver` éventuel
+    /// ne doit pas compter comme de l'activité physique.
+    private static func isDiskImage(_ service: io_object_t) -> Bool {
+        var current = service
+        IOObjectRetain(current)
+        defer { IOObjectRelease(current) }
+
+        for _ in 0..<12 {
+            var buffer = [CChar](repeating: 0, count: 128)
+            if IORegistryEntryGetName(current, &buffer) == KERN_SUCCESS,
+               String(cString: buffer).localizedCaseInsensitiveContains("HDIX") {
+                return true
+            }
+            var parent: io_registry_entry_t = 0
+            guard IORegistryEntryGetParentEntry(current, kIOServicePlane, &parent) == KERN_SUCCESS else {
+                return false
+            }
+            IOObjectRelease(current)
+            current = parent
+        }
+        return false
+    }
+}
+
+// MARK: - SMART NVMe
+//
+// `IOKit/storage/IONVMeSMARTLib.h` n'est pas exposé au module Swift : on
+// déclare donc à la main les identifiants d'interface et la disposition des
+// deux structures COM (`IOCFPlugInInterface`, `IONVMeSMARTInterface`), comme
+// Toasty le fait déjà pour IOHID. Aucun privilège requis : la page de log
+// SMART est maintenue par le contrôleur et se lit comme n'importe quel accès
+// IOKit.
+
+/// `IUNKNOWN_C_GUTS` : les quatre premiers membres d'une interface COM IOKit.
+private typealias IOQueryInterface =
+    @convention(c) (UnsafeMutableRawPointer?, CFUUIDBytes, UnsafeMutablePointer<UnsafeMutableRawPointer?>?) -> kern_return_t
+private typealias IOAddRefRelease = @convention(c) (UnsafeMutableRawPointer?) -> UInt32
+
+private struct IOCFPlugInInterface {
+    var reserved: UnsafeMutableRawPointer?
+    var queryInterface: IOQueryInterface?
+    var addRef: IOAddRefRelease?
+    var release: IOAddRefRelease?
+    var probe: (@convention(c) (UnsafeMutableRawPointer?, CFDictionary?, io_service_t, UnsafeMutablePointer<Int32>?) -> kern_return_t)?
+    var start: (@convention(c) (UnsafeMutableRawPointer?, CFDictionary?, io_service_t) -> kern_return_t)?
+    var stop: (@convention(c) (UnsafeMutableRawPointer?) -> kern_return_t)?
+}
+
+private struct IONVMeSMARTInterface {
+    var reserved: UnsafeMutableRawPointer?
+    var queryInterface: IOQueryInterface?
+    var addRef: IOAddRefRelease?
+    var release: IOAddRefRelease?
+    var version: UInt16 = 0
+    var revision: UInt16 = 0
+    var smartReadData: (@convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?) -> kern_return_t)?
+}
+
+private let nvmeSMARTUserClientTypeID: CFUUID = CFUUIDGetConstantUUIDWithBytes(nil,
+    0xAA, 0x0F, 0xA6, 0xF9, 0xC2, 0xD6, 0x45, 0x7F,
+    0xB1, 0x0B, 0x59, 0xA1, 0x32, 0x53, 0x29, 0x2F
+)!
+
+private let nvmeSMARTInterfaceID: CFUUID = CFUUIDGetConstantUUIDWithBytes(nil,
+    0xCC, 0xD1, 0xDB, 0x19, 0xFD, 0x9A, 0x4D, 0xAF,
+    0xBF, 0x95, 0x12, 0x45, 0x4B, 0x23, 0x0A, 0xB6
+)!
+
+private let cfPlugInInterfaceID: CFUUID = CFUUIDGetConstantUUIDWithBytes(nil,
+    0xC2, 0x44, 0xE8, 0x58, 0x10, 0x9C, 0x11, 0xD4,
+    0x91, 0xD4, 0x00, 0x50, 0xE4, 0xC6, 0x42, 0x6F
+)!
+
+@_silgen_name("IOCreatePlugInInterfaceForService")
+private func ioCreatePlugInInterface(
+    _ service: io_service_t,
+    _ pluginType: CFUUID,
+    _ interfaceType: CFUUID,
+    _ theInterface: UnsafeMutableRawPointer?,
+    _ theScore: UnsafeMutablePointer<Int32>?
+) -> kern_return_t
+
+@_silgen_name("IODestroyPlugInInterface")
+private func ioDestroyPlugInInterface(_ interface: UnsafeMutableRawPointer?) -> kern_return_t
+
+/// Santé du SSD lue dans la page de log SMART NVMe.
+///
+/// Cf. la norme NVMe, « SMART / Health Information Log » (identifiant 0x02) :
+/// température en kelvins sur deux octets, pourcentage d'usure au 6ᵉ. On lit
+/// dans un tampon brut de 512 octets plutôt que de redéclarer toute la
+/// structure — la disposition ne nous intéresse qu'en ces deux points.
+///
+/// Coût : la lecture envoie une commande administrative au contrôleur, d'où
+/// le cache. La température et la santé évoluent lentement.
+public final class DiskSmartReader: @unchecked Sendable {
+    public typealias Reading = (temperature: Double?, health: Int?)
+
+    /// Cadence de rafraîchissement : le SMART bouge sur des heures, pas des
+    /// secondes. 60 s est déjà généreux.
+    private let timeToLive: TimeInterval = 60
+    /// On ne paie pas la commande NVMe sur les premiers ticks, au démarrage :
+    /// le panneau a le temps de s'afficher avant que la santé n'apparaisse.
+    private let startupDelay: TimeInterval = 10
+    private let startedAt = Date()
+
+    private var cached: Reading?
+    private var lastRead: Date?
+
+    public init() {}
+
+    public func read() -> Reading? {
+        let now = Date()
+        if let lastRead, now.timeIntervalSince(lastRead) < timeToLive {
+            return cached
+        }
+        if now.timeIntervalSince(startedAt) < startupDelay {
+            return cached
+        }
+        lastRead = now
+        // Un échec ponctuel ne doit pas effacer une valeur déjà connue.
+        if let reading = Self.collect() {
+            cached = reading
+        }
+        return cached
+    }
+
+    private static func collect() -> Reading? {
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault,
+                                           IOServiceMatching("IOBlockStorageDevice"),
+                                           &iterator) == kIOReturnSuccess
+        else { return nil }
+        defer { IOObjectRelease(iterator) }
+
+        while case let device = IOIteratorNext(iterator), device != 0 {
+            defer { IOObjectRelease(device) }
+            guard (ioProperty(device, "NVMe SMART Capable") as? Bool) == true else { continue }
+            guard let log = smartLog(for: device), log.count >= 6 else { continue }
+            return Reading(temperature: temperature(from: log), health: health(from: log))
+        }
+        return nil
+    }
+
+    /// Température du die du SSD, en °C. Le contrôleur la stocke en kelvins
+    /// aux octets 1-2, petit-boutiste (`critical_warning` occupe l'octet 0) ;
+    /// une valeur sous 273 K signale un capteur muet.
+    private static func temperature(from log: [UInt8]) -> Double? {
+        let kelvin = UInt16(log[1]) | (UInt16(log[2]) << 8)
+        guard kelvin > 273 else { return nil }
+        return Double(kelvin - 273)
+    }
+
+    /// Santé en pourcentage : 100 moins le pourcentage de vie consommée.
+    private static func health(from log: [UInt8]) -> Int? {
+        let used = Int(log[5])
+        guard used <= 100 else { return nil }
+        return 100 - used
+    }
+
+    /// Ouvre l'interface SMART et lit la page de log dans un tampon de 512 o.
+    private static func smartLog(for device: io_service_t) -> [UInt8]? {
+        var plugInPointer: UnsafeMutablePointer<UnsafeMutablePointer<IOCFPlugInInterface>?>?
+        var score: Int32 = 0
+        let created = withUnsafeMutablePointer(to: &plugInPointer) { pointer in
+            ioCreatePlugInInterface(device, nvmeSMARTUserClientTypeID, cfPlugInInterfaceID,
+                                    UnsafeMutableRawPointer(pointer), &score)
+        }
+        guard created == kIOReturnSuccess,
+              let plugIn = plugInPointer,
+              let interface = plugIn.pointee
+        else { return nil }
+        defer { _ = ioDestroyPlugInInterface(UnsafeMutableRawPointer(plugIn)) }
+
+        let plugInThis = UnsafeMutableRawPointer(plugIn)
+
+        var smartPointer: UnsafeMutablePointer<UnsafeMutablePointer<IONVMeSMARTInterface>?>?
+        let queried = withUnsafeMutablePointer(to: &smartPointer) { pointer in
+            pointer.withMemoryRebound(to: UnsafeMutableRawPointer?.self, capacity: 1) { rebound in
+                interface.pointee.queryInterface?(plugInThis,
+                                                  CFUUIDGetUUIDBytes(nvmeSMARTInterfaceID),
+                                                  rebound)
+            }
+        }
+        guard queried == kIOReturnSuccess,
+              let smart = smartPointer?.pointee
+        else { return nil }
+        let smartThis = UnsafeMutableRawPointer(smartPointer!)
+        defer { _ = smart.pointee.release?(smartThis) }
+
+        var log = [UInt8](repeating: 0, count: 512)
+        let result = log.withUnsafeMutableBytes { buffer in
+            smart.pointee.smartReadData?(smartThis, buffer.baseAddress)
+        }
+        guard result == kIOReturnSuccess else { return nil }
+        return log
+    }
+}
+
+/// Agrège les trois sources disque en un `DiskUsage`.
+public final class DiskReader: @unchecked Sendable {
+    private let activity = DiskActivityReader()
+    private let smart = DiskSmartReader()
+
+    public init() {}
+
+    public func read() -> DiskUsage {
+        var usage = DiskUsage()
+
+        let capacity = DiskCapacity.read()
+        usage.isPresent = capacity.total > 0
+        usage.used = capacity.used
+        usage.total = capacity.total
+        usage.free = capacity.free
+        usage.fileSystem = capacity.fileSystem
+        guard usage.isPresent else { return usage }
+
+        let throughput = activity.read()
+        usage.readPerSecond = throughput.read
+        usage.writePerSecond = throughput.write
+
+        if let reading = smart.read() {
+            usage.smartTemperature = reading.temperature
+            usage.smartHealth = reading.health
+        }
+        return usage
+    }
+}
+
 // MARK: - Agrégateur
 
 public final class MetricsCollector: @unchecked Sendable {
     private let cpu = CPUReader()
     private let memory = MemoryReader()
     private let network = NetworkReader()
+    private let disk = DiskReader()
     private let battery = BatteryReader()
     private let gpu = GPUReader()
     private let temperature = TemperatureReader()
     private let process = ProcessReader()
-    private let batteryHealthReader = BatteryHealthReader()
-    private let disk = DiskReader()
-    private let diskSpaceReader = DiskSpaceReader()
-    private let cachedBatteryHealth: BatteryHealth
+    private let bluetooth = BluetoothReader()
 
-    public init() {
-        cachedBatteryHealth = batteryHealthReader.read()
-    }
+    public init() {}
 
     public var coreCount: Int { cpu.coreCount }
 
@@ -968,13 +1430,12 @@ public final class MetricsCollector: @unchecked Sendable {
             cpu: cpu.read(),
             memory: memory.read(),
             network: network.read(),
+            disk: disk.read(),
             battery: battery.read(),
             gpu: gpu.read(),
             temperature: temperature.read(),
-            batteryHealth: cachedBatteryHealth,
-            disk: disk.read(),
-            diskSpace: diskSpaceReader.read(),
             processes: process.read(),
+            bluetooth: bluetooth.read(),
             date: Date()
         )
     }
